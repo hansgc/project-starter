@@ -54,6 +54,11 @@ bool() {
   [[ "${1,,}" =~ ^(true|si|sí|yes|1)$ ]]
 }
 
+bool_default_true() {
+  # Solo desactiva si el valor es explícitamente falso.
+  [[ ! "${1,,}" =~ ^(false|no|0)$ ]]
+}
+
 if [[ -n "$CONFIG_FILE" ]]; then
   # ── Modo archivo ────────────────────────────────────────────────────────────
   if [[ ! -f "$CONFIG_FILE" ]]; then
@@ -83,7 +88,7 @@ if [[ -n "$CONFIG_FILE" ]]; then
   DB_NETWORK="${DB_NETWORK:-}"
 
   # Normalizar booleanos
-  bool "${USE_SYMFONY:-true}"       && USE_SYMFONY=true       || USE_SYMFONY=false
+  bool_default_true "${USE_SYMFONY:-true}" && USE_SYMFONY=true || USE_SYMFONY=false
   bool "${USE_DB:-false}"           && USE_DB=true           || USE_DB=false
   bool "${USE_AUTH:-false}"         && USE_AUTH=true         || USE_AUTH=false
   bool "${USE_JWT:-false}"          && USE_JWT=true          || USE_JWT=false
@@ -126,10 +131,12 @@ else
   # API Platform, Messenger, Mailer are disabled and not prompted
 fi
 
-# Este inicializador actualmente implementa Symfony como framework de aplicación.
+# Los módulos actuales de framework son específicos de Symfony.
 if ! $USE_SYMFONY; then
-  echo "Error: este inicializador PHP requiere USE_SYMFONY=true para crear el framework Symfony."
-  exit 1
+  USE_DB=false
+  USE_AUTH=false
+  USE_JWT=false
+  USE_ADMIN=false
 fi
 
 # EasyAdmin necesita Doctrine (aplica en ambos modos)
@@ -167,19 +174,28 @@ mkdir -p app
 # -----------------------------------------------------------------------------
 step "Generando Dockerfile dev"
 
-DEV_EXTENSIONS="intl opcache zip"
-DEV_APT="libicu-dev libonig-dev libxml2-dev libzip-dev"
+if $USE_SYMFONY; then
+  DEV_EXTENSIONS="intl opcache zip"
+  DEV_APT="git curl unzip libicu-dev libonig-dev libxml2-dev libzip-dev"
+else
+  DEV_EXTENSIONS=""
+  DEV_APT="curl"
+fi
 $USE_DB        && DEV_APT+=" default-libmysqlclient-dev"         && DEV_EXTENSIONS+=" pdo pdo_mysql"
 
+DEV_INSTALL_EXTENSIONS="&& true"
+if [[ -n "$DEV_EXTENSIONS" ]]; then
+  DEV_INSTALL_EXTENSIONS="&& docker-php-ext-install ${DEV_EXTENSIONS}"
+fi
 
-cat > aDespliegue/dev/Dockerfile <<DOCKERFILE
+if $USE_SYMFONY; then
+  cat > aDespliegue/dev/Dockerfile <<DOCKERFILE
 FROM php:${PHP_VERSION}-fpm
 
 RUN apt-get update && apt-get install -y \\
-    git curl unzip ${DEV_APT} \\
-    && docker-php-ext-install ${DEV_EXTENSIONS} \\
+    ${DEV_APT} \\
+    ${DEV_INSTALL_EXTENSIONS} \\
     && apt-get clean && rm -rf /var/lib/apt/lists/*
-
 
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
@@ -193,6 +209,15 @@ WORKDIR /workspace
 
 EXPOSE 9000
 DOCKERFILE
+else
+  cat > aDespliegue/dev/Dockerfile <<DOCKERFILE
+FROM php:${PHP_VERSION}-fpm
+
+WORKDIR /workspace
+
+EXPOSE 9000
+DOCKERFILE
+fi
 
 # -----------------------------------------------------------------------------
 # 6. aDespliegue/dev/docker-compose.yml
@@ -243,16 +268,16 @@ YAML
 # -----------------------------------------------------------------------------
 step "Generando Dockerfile prod"
 
-PROD_EXTENSIONS="intl opcache zip"
-PROD_APT="libicu-dev libonig-dev libxml2-dev libzip-dev"
-$USE_DB        && PROD_APT+=" default-libmysqlclient-dev"      && PROD_EXTENSIONS+=" pdo pdo_mysql"
+if $USE_SYMFONY; then
+  PROD_EXTENSIONS="intl opcache zip"
+  PROD_APT="git curl unzip libicu-dev libonig-dev libxml2-dev libzip-dev"
+  $USE_DB && PROD_APT+=" default-libmysqlclient-dev" && PROD_EXTENSIONS+=" pdo pdo_mysql"
 
-
-cat > aDespliegue/prod/Dockerfile <<DOCKERFILE
+  cat > aDespliegue/prod/Dockerfile <<DOCKERFILE
 FROM php:${PHP_VERSION}-fpm AS builder
 
 RUN apt-get update && apt-get install -y \\
-    git curl unzip ${PROD_APT} \\
+    ${PROD_APT} \\
     && docker-php-ext-install ${PROD_EXTENSIONS} \\
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
@@ -282,6 +307,23 @@ COPY --from=builder /workspace .
 
 EXPOSE 9000
 DOCKERFILE
+else
+  cat > aDespliegue/prod/Dockerfile <<DOCKERFILE
+FROM php:${PHP_VERSION}-fpm
+
+# Opcache tuning para producción
+RUN docker-php-ext-install opcache \\
+ && echo "opcache.enable=1" >> /usr/local/etc/php/conf.d/opcache.ini \\
+ && echo "opcache.memory_consumption=128" >> /usr/local/etc/php/conf.d/opcache.ini \\
+ && echo "opcache.max_accelerated_files=10000" >> /usr/local/etc/php/conf.d/opcache.ini \\
+ && echo "opcache.validate_timestamps=0" >> /usr/local/etc/php/conf.d/opcache.ini
+
+WORKDIR /workspace
+COPY app/ .
+
+EXPOSE 9000
+DOCKERFILE
+fi
 
 # -----------------------------------------------------------------------------
 # 9. aDespliegue/prod/docker-compose.yml
@@ -408,17 +450,57 @@ cat > .devcontainer/devcontainer.json <<JSON
 }
 JSON
 
+if ! $USE_SYMFONY; then
+  cat > .devcontainer/devcontainer.json <<JSON
+{
+  "name": "${PROJECT_NAME}",
+  "dockerComposeFile": ["../aDespliegue/dev/docker-compose.yml"],
+  "service": "${PROJECT_SLUG}_php",
+  "workspaceFolder": "/workspace",
+  "remoteUser": "root",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "bmewburn.vscode-intelephense-client",
+        "ikappas.phpcs",
+        "junstyle.php-cs-fixer"
+      ],
+      "settings": {
+        "php.validate.executablePath": "/usr/local/bin/php",
+        "php.debug.executablePath": "/usr/local/bin/php",
+        "intelephense.environment.phpVersion": "${PHP_VERSION}",
+        "editor.formatOnSave": true,
+        "[php]": {
+          "editor.defaultFormatter": "junstyle.php-cs-fixer"
+        }
+      }
+    }
+  }
+}
+JSON
+fi
+
 # -----------------------------------------------------------------------------
 # 11. .env base en la raíz
 # -----------------------------------------------------------------------------
 step "Generando .env"
 
-# ── Leer defaults globales desde ~/.symfony-defaults ──────────────────────────
-DEFAULTS_FILE="$HOME/.symfony-defaults"
+APP_SECRET=$(openssl rand -hex 16)
+DEV_DB_HOST="${DB_HOST:-host.docker.internal}"
+DEV_DB_PORT="${DB_PORT:-3306}"
+DEV_DB_USER="app"
+DEV_DB_PASSWORD="secret"
+DEV_ADMIN_LOGIN="${ADMIN_LOGIN:-admin}"
+DEV_ADMIN_PASSWORD="${ADMIN_PASSWORD:-change_me_admin_password}"
+DEV_JWT_PASSPHRASE="changeme"
 
-if [[ ! -f "$DEFAULTS_FILE" ]]; then
-  echo "⚠ No se encontró ~/.symfony-defaults. Creando uno con valores de ejemplo..."
-  cat > "$DEFAULTS_FILE" <<DEFAULTS
+if $USE_SYMFONY; then
+  # ── Leer defaults globales desde ~/.symfony-defaults ──────────────────────────
+  DEFAULTS_FILE="$HOME/.symfony-defaults"
+
+  if [[ ! -f "$DEFAULTS_FILE" ]]; then
+    echo "⚠ No se encontró ~/.symfony-defaults. Creando uno con valores de ejemplo..."
+    cat > "$DEFAULTS_FILE" <<DEFAULTS
 # Credenciales por defecto para proyectos Symfony en dev
 # Este archivo nunca debe commitearse al repositorio.
 DB_USER=app
@@ -429,27 +511,27 @@ ADMIN_LOGIN=admin
 ADMIN_PASSWORD=change_me_admin_password
 JWT_PASSPHRASE=dev_jwt_passphrase
 DEFAULTS
-  echo "  Editá ~/.symfony-defaults con tus credenciales reales antes de continuar."
-  echo "  Luego volvé a correr el script."
-  exit 0
+    echo "  Editá ~/.symfony-defaults con tus credenciales reales antes de continuar."
+    echo "  Luego volvé a correr el script."
+    exit 0
+  fi
+
+  # Cargar defaults (ignorar comentarios y líneas vacías)
+  while IFS="=" read -r key value; do
+    [[ "$key" =~ ^#.*$ || -z "$key" ]] && continue
+    key=$(echo "$key" | tr -d " ")
+    value=$(echo "$value" | tr -d "\"" | tr -d "\047" | xargs)
+    declare "DEFAULT_${key}=$value"
+  done < "$DEFAULTS_FILE"
+
+  DEV_DB_USER="${DEFAULT_DB_USER:-app}"
+  DEV_DB_PASSWORD="${DEFAULT_DB_PASSWORD:-secret}"
+  DEV_DB_HOST="${DB_HOST:-${DEFAULT_DB_HOST:-host.docker.internal}}"
+  DEV_DB_PORT="${DB_PORT:-${DEFAULT_DB_PORT:-3306}}"
+  DEV_ADMIN_LOGIN="${ADMIN_LOGIN:-${DEFAULT_ADMIN_LOGIN:-admin}}"
+  DEV_ADMIN_PASSWORD="${ADMIN_PASSWORD:-${DEFAULT_ADMIN_PASSWORD:-change_me_admin_password}}"
+  DEV_JWT_PASSPHRASE="${DEFAULT_JWT_PASSPHRASE:-changeme}"
 fi
-
-# Cargar defaults (ignorar comentarios y líneas vacías)
-while IFS='=' read -r key value; do
-  [[ "$key" =~ ^#.*$ || -z "$key" ]] && continue
-  key=$(echo "$key" | tr -d ' ')
-  value=$(echo "$value" | tr -d '"' | tr -d "'" | xargs)
-  declare "DEFAULT_${key}=$value"
-done < "$DEFAULTS_FILE"
-
-DEV_DB_USER="${DEFAULT_DB_USER:-app}"
-DEV_DB_PASSWORD="${DEFAULT_DB_PASSWORD:-secret}"
-DEV_DB_HOST="${DB_HOST:-${DEFAULT_DB_HOST:-host.docker.internal}}"
-DEV_DB_PORT="${DB_PORT:-${DEFAULT_DB_PORT:-3306}}"
-DEV_ADMIN_LOGIN="${ADMIN_LOGIN:-${DEFAULT_ADMIN_LOGIN:-admin}}"
-DEV_ADMIN_PASSWORD="${ADMIN_PASSWORD:-${DEFAULT_ADMIN_PASSWORD:-change_me_admin_password}}"
-DEV_JWT_PASSPHRASE="${DEFAULT_JWT_PASSPHRASE:-changeme}"
-APP_SECRET=$(openssl rand -hex 16)
 
 # ── .env.example (se commitea, sin valores reales) ───────────────────────────
 cat > .env.example <<ENV
@@ -573,6 +655,44 @@ prod-up:
 
 MAKE
 
+if ! $USE_SYMFONY; then
+  cat > Makefile <<MAKE
+.PHONY: up down build start stop sh logs ps prod-build prod-up
+
+ENV_DIR = aDespliegue/dev
+RUN_PHP = docker compose -f \$(ENV_DIR)/docker-compose.yml exec -w /workspace ${PROJECT_SLUG}_php
+
+up:
+	docker compose -f \$(ENV_DIR)/docker-compose.yml up -d
+
+down:
+	docker compose -f \$(ENV_DIR)/docker-compose.yml down
+
+build:
+	docker compose -f \$(ENV_DIR)/docker-compose.yml build --no-cache
+
+start: up
+
+stop: down
+
+sh:
+	\$(RUN_PHP) bash
+
+logs:
+	docker compose -f \$(ENV_DIR)/docker-compose.yml logs -f
+
+ps:
+	docker compose -f \$(ENV_DIR)/docker-compose.yml ps
+
+prod-build:
+	docker compose -f aDespliegue/prod/docker-compose.yml build --no-cache
+
+prod-up:
+	docker compose -f aDespliegue/prod/docker-compose.yml up -d
+
+MAKE
+fi
+
 if $USE_AUTH && $USE_DB; then
   cat >> Makefile <<MAKE
 admin:
@@ -623,6 +743,11 @@ docker compose -f aDespliegue/dev/docker-compose.yml up -d
 # Esperar a que PHP esté listo
 echo "Esperando que los contenedores estén listos..."
 sleep 3
+
+# -----------------------------------------------------------------------------
+# 15. Crear aplicación
+# -----------------------------------------------------------------------------
+if $USE_SYMFONY; then
 
 # -----------------------------------------------------------------------------
 # 15. symfony new app
@@ -789,6 +914,27 @@ $USE_JWT && {
   sym_exec "mkdir -p config/jwt && php bin/console lexik:jwt:generate-keypair --skip-if-exists"
 }
 
+else
+  step "Creando aplicación PHP básica en app/"
+  mkdir -p app/public
+  cat > app/public/index.php <<PHP
+<?php
+
+http_response_code(200);
+
+echo "<h1>PHP app lista</h1>";
+echo "<p>Proyecto: ${PROJECT_NAME}</p>";
+PHP
+
+  cat > app/composer.json <<JSON
+{
+  "name": "app/${PROJECT_SLUG}",
+  "type": "project",
+  "require": {}
+}
+JSON
+fi
+
 # Asegurar que todos los archivos nuevos creados sean del usuario host
 docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${PROJECT_SLUG}_php chown -R $(id -u):$(id -g) /workspace
 
@@ -805,7 +951,11 @@ echo "  ${PROJECT_SLUG}/"
 echo "  ├── .devcontainer/devcontainer.json"
 echo "  ├── aDespliegue/dev/   (docker-compose + Dockerfile)"
 echo "  ├── aDespliegue/prod/  (docker-compose + Dockerfile multistage)"
-echo "  ├── app/               (Symfony ${PHP_VERSION})"
+if $USE_SYMFONY; then
+  echo "  ├── app/               (Symfony ${PHP_VERSION})"
+else
+  echo "  ├── app/               (PHP ${PHP_VERSION})"
+fi
 echo "  ├── Makefile"
 echo "  └── .env"
 echo ""
@@ -814,13 +964,19 @@ $USE_AUTH && echo "  🔑  Admin:   ${DEV_ADMIN_LOGIN} / ADMIN_PASSWORD  ← con
 
 echo ""
 echo "  Comandos:"
-echo "    make start     → levanta Docker + servidor Symfony"
-echo "    make serve     → solo arranca el servidor Symfony"
-echo "    make sh        → bash en el contenedor PHP"
-echo "    make cc        → cache:clear"
-$USE_DB      && echo "    make migrate   → doctrine:migrations:migrate"
-$USE_JWT     && echo "    make jwt-keys  → regenerar claves JWT"
-echo "    make logs-symfony → ver log del servidor Symfony"
+if $USE_SYMFONY; then
+  echo "    make start     → levanta Docker + servidor Symfony"
+  echo "    make serve     → solo arranca el servidor Symfony"
+  echo "    make sh        → bash en el contenedor PHP"
+  echo "    make cc        → cache:clear"
+  $USE_DB      && echo "    make migrate   → doctrine:migrations:migrate"
+  $USE_JWT     && echo "    make jwt-keys  → regenerar claves JWT"
+  echo "    make logs-symfony → ver log del servidor Symfony"
+else
+  echo "    make start     → levanta Docker"
+  echo "    make sh        → bash en el contenedor PHP"
+  echo "    make logs      → ver logs de Docker"
+fi
 echo "    make prod-up   → levantar entorno prod (Nginx)"
 echo ""
 echo "  En VSCode: Dev Containers: Reopen in Container"
