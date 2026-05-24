@@ -1,0 +1,129 @@
+{% extends '@EasyAdmin/crud/detail.html.twig' %}
+
+{% block main %}
+    <div class="row mb-3">
+        <div class="col-12">
+            <div class="card border-0 shadow-sm overflow-hidden">
+                <div class="card-body p-0">
+                    <table class="table table-bordered table-sm mb-0 text-center align-middle">
+                        <thead class="bg-light text-muted small text-uppercase font-weight-bold">
+                            <tr>
+                                <th class="py-1" style="width: 8%">ID</th>
+                                
+                                {# Definir configuración de campos #}
+                                {% set campos_config = {
+                                    'creado': {
+                                        'condicion': entity.instance.creadoEl is defined or entity.instance.creEl is defined,
+                                        'cabecera': 'Registrado'
+                                    },
+                                    'creadoPor': {
+                                        'condicion': entity.instance.creadoPor is defined or entity.instance.crePor is defined,
+                                        'cabecera': 'Por'
+                                    },
+                                    'modificado': {
+                                        'condicion': entity.instance.modificadoEl is defined or entity.instance.actualizadoEl is defined or entity.instance.mdfEl is defined,
+                                        'cabecera': 'Modificado'
+                                    },
+                                    'estado': {
+                                        'condicion': entity.instance.estado is defined and entity.instance.estado is not empty,
+                                        'cabecera': 'Estado'
+                                    },
+                                    'activo': {
+                                        'condicion': entity.instance.esActivo is defined or entity.instance.activo is defined,
+                                        'cabecera': 'Activo'
+                                    },
+                                    'evaluacionIA': {
+                                        'condicion': entity.instance.resultadoEvaluacionIa is defined,
+                                        'cabecera': 'Evaluación IA'
+                                    }
+                                } %}
+
+                                {# Renderizar cabeceras dinámicamente #}
+                                {% for campo_key, campo_config in campos_config %}
+                                    {% if campo_config.condicion and not (campo_key in (campos_excluidos|default([]))) %}
+                                        <th class="py-1">{{ campo_config.cabecera }}</th>
+                                    {% endif %}
+                                {% endfor %}
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white">
+                            <tr>
+                                <td class="py-1 font-weight-bold text-primary align-middle">#{{ entity.instance.id }}</td>
+                                
+                                {# Renderizar valores dinámicamente #}
+                                {% if campos_config.creado.condicion and not ('creado' in (campos_excluidos|default([]))) %}
+                                    {% set fechaCre = entity.instance.creadoEl ?? entity.instance.creEl ?? null %}
+                                    <td class="py-1 text-muted small align-middle">
+                                        {{ fechaCre ? fechaCre|date('d/m/Y H:i') : '-' }}
+                                    </td>
+                                {% endif %}
+
+                                {% if campos_config.creadoPor.condicion and not ('creadoPor' in (campos_excluidos|default([]))) %}
+                                    {% set creador = entity.instance.creadoPor ?? entity.instance.crePor ?? null %}
+                                    <td class="py-1 text-muted align-middle">
+                                        {% if creador and creador.iniciales is defined %}
+                                            <span class="badge badge-info px-2 py-1 shadow-sm">{{ creador.iniciales }}</span>
+                                        {% endif %}
+                                        {{ creador ?? '-' }}
+                                    </td>
+                                {% endif %}
+
+                                {% if campos_config.modificado.condicion and not ('modificado' in (campos_excluidos|default([]))) %}
+                                    {% set fechaMod = entity.instance.modificadoEl ?? entity.instance.actualizadoEl ?? entity.instance.mdfEl ?? null %}
+                                    <td class="py-1 text-muted small align-middle">
+                                        {{ fechaMod ? fechaMod|date('d/m/Y H:i') : '-' }}
+                                    </td>
+                                {% endif %}
+
+                                {% if campos_config.estado.condicion and not ('estado' in (campos_excluidos|default([]))) %}
+                                    <td class="py-1 align-middle">
+                                        {% set colorEst = 'warning' %}
+                                        {% set estadoVal = entity.instance.estado %}
+                                        {% if estadoVal and estadoVal.id is defined %}
+                                            {% if estadoVal.id == 1 or estadoVal.id == 50 %} {% set colorEst = 'success' %}
+                                            {% elseif estadoVal.id >= 90 %} {% set colorEst = 'danger' %}
+                                            {% endif %}
+                                        {% endif %}
+                                        <span class="font-weight-bold text-{{ colorEst }}">
+                                            {{ estadoVal ? estadoVal|upper : '-' }}
+                                        </span>
+                                    </td>
+                                {% endif %}
+
+                                {% if campos_config.activo.condicion and not ('activo' in (campos_excluidos|default([]))) %}
+                                    {% set valorActivo = entity.instance.esActivo ?? entity.instance.activo ?? null %}
+                                    <td class="py-1 align-middle">
+                                        {% if valorActivo is same as(true) %}
+                                            <span class="badge badge-success px-3 py-1 shadow-sm"><i class="fa fa-check mr-1"></i> SI</span>
+                                        {% else %}
+                                            <span class="badge badge-danger px-3 py-1 shadow-sm"><i class="fa fa-times mr-1"></i> NO</span>
+                                        {% endif %}
+                                    </td>
+                                {% endif %}
+
+                                {% if campos_config.evaluacionIA.condicion and not ('evaluacionIA' in (campos_excluidos|default([]))) %}
+                                    {% set evalIa = entity.instance.resultadoEvaluacionIa %}
+                                    <td class="py-1 align-middle" style="min-width: 300px;">
+                                        {% if evalIa is empty %}
+                                            <span class="text-muted">Sin evaluar</span>
+                                        {% else %}
+                                            <small class="text-muted" style="font-size: 0.7rem; line-height: 0.8rem; white-space: pre-wrap;">
+                                                {{ evalIa }}
+                                            </small>
+                                        {% endif %}
+                                    </td>
+                                {% endif %}
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-12">
+            {{ parent() }}
+        </div>
+    </div>
+{% endblock %}
