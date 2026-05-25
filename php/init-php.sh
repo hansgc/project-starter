@@ -78,14 +78,16 @@ if [[ -n "$CONFIG_FILE" ]]; then
   # Derivar PROJECT_NAME del nombre del archivo de configuración
   CONFIG_BASENAME=$(basename "$CONFIG_FILE" .conf)
   PROJECT_NAME=${CONFIG_BASENAME#project_}
+  PROJECT_NAME=${PROJECT_NAME#php_}
   if [[ -z "${PROJECT_NAME:-}" ]]; then
     echo "Error: PROJECT_NAME es obligatorio en el archivo de config."; exit 1
   fi
 
   # Aplicar defaults para campos opcionales
-  PHP_VERSION="${PHP_VERSION:-8.3}"
+  PHP_VERSION="${PHP_VERSION:-8.4}"
   HTTP_PORT="${HTTP_PORT:-8080}"
   DB_NETWORK="${DB_NETWORK:-}"
+  SYMFONY_INSTALL="${SYMFONY_INSTALL:-minimal}"
 
   # Normalizar booleanos
   bool_default_true "${USE_SYMFONY:-true}" && USE_SYMFONY=true || USE_SYMFONY=false
@@ -110,6 +112,7 @@ else
 
   PHP_VERSION=$(ask_input "Versión de PHP" "8.3")
   HTTP_PORT=$(ask_input "Puerto HTTP local (dev)" "8080")
+  SYMFONY_INSTALL="minimal"
   DB_NETWORK=""
 
   echo ""
@@ -147,10 +150,94 @@ if $USE_ADMIN && ! $USE_DB; then
 fi
 
 PROJECT_SLUG=$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')
+DEV_PHP_SERVICE="php_${PROJECT_SLUG}"
+DEV_PHP_NAME="dev-php_${PROJECT_SLUG}"
+PROD_PHP_SERVICE="php_${PROJECT_SLUG}"
+PROD_PHP_NAME="prod-php_${PROJECT_SLUG}"
+PROD_NGINX_SERVICE="nginx_${PROJECT_SLUG}"
+PROD_NGINX_NAME="prod-nginx_${PROJECT_SLUG}"
+DEV_NETWORK_NAME="dev-php_${PROJECT_SLUG}_net"
+PROD_NETWORK_NAME="prod-php_${PROJECT_SLUG}_net"
 CONFIRM=s
 # -----------------------------------------------------------------------------
 # 2. Resumen (siempre se muestra, con confirmación solo en modo interactivo)
   [[ "$CONFIRM" =~ ^[sS]$ ]] || { echo "Cancelado."; exit 0; }
+
+# -----------------------------------------------------------------------------
+# 3. Validar base de datos antes de crear directorios
+# -----------------------------------------------------------------------------
+if $USE_DB; then
+  # Cargar defaults si existen
+  if [[ -f "$HOME/.symfony-defaults" ]]; then
+    while IFS="=" read -r key value; do
+      [[ "$key" =~ ^#.*$ || -z "$key" ]] && continue
+      key=$(echo "$key" | tr -d " ")
+      value=$(echo "$value" | tr -d "\"" | tr -d "\047" | xargs)
+      declare "DEFAULT_${key}=$value"
+    done < "$HOME/.symfony-defaults"
+  fi
+  CHECK_DB_USER="${DB_USER:-${DEFAULT_DB_USER:-app}}"
+  CHECK_DB_PASSWORD="${DB_PASSWORD:-${DEFAULT_DB_PASSWORD:-secret}}"
+  CHECK_DB_HOST="${DB_HOST:-${DEFAULT_DB_HOST:-host.docker.internal}}"
+  CHECK_DB_PORT="${DB_PORT:-${DEFAULT_DB_PORT:-3306}}"
+  CHECK_DB_NAME="${DB_NAME:-${PROJECT_SLUG}}"
+
+  echo "Verificando base de datos antes de iniciar..."
+
+  DB_EXISTS=false
+  VERIFIED=false
+
+  # Método 1: Si el host de la base de datos es un contenedor Docker corriendo localmente
+  if docker ps --format '{{.Names}}' | grep -Eq "^${CHECK_DB_HOST}$"; then
+    if docker exec "${CHECK_DB_HOST}" mysql -u"${CHECK_DB_USER}" -p"${CHECK_DB_PASSWORD}" -e "USE \`${CHECK_DB_NAME}\`;" &>/dev/null; then
+      DB_EXISTS=true
+    fi
+    VERIFIED=true
+  fi
+
+  # Método 2: Si el host tiene instalado el cliente mysql
+  if ! $VERIFIED && command -v mysql &>/dev/null; then
+    if mysql -h"${CHECK_DB_HOST}" -P"${CHECK_DB_PORT}" -u"${CHECK_DB_USER}" -p"${CHECK_DB_PASSWORD}" -e "USE \`${CHECK_DB_NAME}\`;" &>/dev/null; then
+      DB_EXISTS=true
+    fi
+    VERIFIED=true
+  fi
+
+  # Método 3: Si el host tiene php con pdo_mysql
+  if ! $VERIFIED && command -v php &>/dev/null && php -m | grep -q "pdo_mysql"; then
+    if php -r "new PDO('mysql:host=${CHECK_DB_HOST};port=${CHECK_DB_PORT};dbname=${CHECK_DB_NAME}', '${CHECK_DB_USER}', '${CHECK_DB_PASSWORD}');" &>/dev/null; then
+      DB_EXISTS=true
+    fi
+    VERIFIED=true
+  fi
+
+  if $VERIFIED; then
+    if ! $DB_EXISTS; then
+      echo ""
+      echo "❌ Error crítico: La base de datos '${CHECK_DB_NAME}' no existe en el servidor '${CHECK_DB_HOST}:${CHECK_DB_PORT}'."
+      echo "   Por favor, crea la base de datos en tu MySQL y otorga los privilegios al usuario '${CHECK_DB_USER}'."
+      echo "   Puedes crearla ejecutando el siguiente código SQL (como root):"
+      echo ""
+      echo "     CREATE DATABASE \`${CHECK_DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+      echo "     GRANT ALL PRIVILEGES ON \`${CHECK_DB_NAME}\`.* TO '${CHECK_DB_USER}'@'%';"
+      echo "     FLUSH PRIVILEGES;"
+      echo ""
+      exit 1
+    else
+      echo "  ✓ Conexión exitosa. La base de datos '${CHECK_DB_NAME}' existe y es accesible."
+    fi
+  else
+    echo ""
+    echo "❌ Error crítico: No se encontró ningún método para verificar la existencia de la base de datos desde el host."
+    echo "   Para poder continuar, el script necesita verificar si la base de datos '${CHECK_DB_NAME}' existe."
+    echo "   Por favor, asegúrate de cumplir con al menos una de las siguientes opciones:"
+    echo "     1. Tener el contenedor de base de datos '${CHECK_DB_HOST}' iniciado y en ejecución (si usas Docker)."
+    echo "     2. Instalar el cliente de MySQL en tu sistema host (ej. 'sudo apt install mysql-client' o similar)."
+    echo "     3. Instalar PHP con el driver PDO MySQL en tu sistema host (ej. 'sudo apt install php-mysql' o similar)."
+    echo ""
+    exit 1
+  fi
+fi
 
 # -----------------------------------------------------------------------------
 # 4. Crear estructura de directorios
@@ -207,15 +294,24 @@ RUN curl -sS https://get.symfony.com/cli/installer | bash \\
 
 WORKDIR /workspace
 
-EXPOSE 9000
+EXPOSE 8000
+
+CMD ["symfony", "server:start", "--no-tls", "--port=8000", "--allow-all-ip"]
 DOCKERFILE
 else
   cat > aDespliegue/dev/Dockerfile <<DOCKERFILE
 FROM php:${PHP_VERSION}-fpm
 
+RUN apt-get update && apt-get install -y \\
+    ${DEV_APT} \\
+    ${DEV_INSTALL_EXTENSIONS} \\
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /workspace
 
-EXPOSE 9000
+EXPOSE 8000
+
+CMD ["php", "-S", "0.0.0.0:8000", "-t", "/workspace/public"]
 DOCKERFILE
 fi
 
@@ -226,18 +322,19 @@ step "Generando docker-compose.yml dev"
 
 DEV_DB_NETWORK=""
 DEV_EXTERNAL_NETWORK=""
-if $USE_DB && [[ -n "$DB_NETWORK" && "$DB_NETWORK" != "${PROJECT_SLUG}_net" ]]; then
+if $USE_DB && [[ -n "$DB_NETWORK" && "$DB_NETWORK" != "${DEV_NETWORK_NAME}" ]]; then
   DEV_DB_NETWORK="      - ${DB_NETWORK}"
   DEV_EXTERNAL_NETWORK=$(printf '  %s:\n    external: true' "$DB_NETWORK")
 fi
 
 cat > aDespliegue/dev/docker-compose.yml <<YAML
 services:
-  ${PROJECT_SLUG}_php:
+  ${DEV_PHP_SERVICE}:
+    image: ${DEV_PHP_NAME}
     build:
       context: ../..
       dockerfile: aDespliegue/dev/Dockerfile
-    container_name: ${PROJECT_SLUG}_php
+    container_name: ${DEV_PHP_NAME}
     ports:
       - "${HTTP_PORT}:8000"
     volumes:
@@ -246,7 +343,7 @@ services:
       APP_ENV: dev
       APP_DEBUG: "1"
     networks:
-      - ${PROJECT_SLUG}_net
+      - ${DEV_NETWORK_NAME}
 ${DEV_DB_NETWORK}
 YAML
 
@@ -258,8 +355,8 @@ YAML
 cat >> aDespliegue/dev/docker-compose.yml <<YAML
 
 networks:
-  ${PROJECT_SLUG}_net:
-    name: ${PROJECT_SLUG}_net
+  ${DEV_NETWORK_NAME}:
+    name: ${DEV_NETWORK_NAME}
 ${DEV_EXTERNAL_NETWORK}
 YAML
 
@@ -330,23 +427,24 @@ fi
 # -----------------------------------------------------------------------------
 PROD_DB_NETWORK=""
 PROD_EXTERNAL_NETWORK=""
-if $USE_DB && [[ -n "$DB_NETWORK" && "$DB_NETWORK" != "${PROJECT_SLUG}_prod_net" ]]; then
+if $USE_DB && [[ -n "$DB_NETWORK" && "$DB_NETWORK" != "${PROD_NETWORK_NAME}" ]]; then
   PROD_DB_NETWORK="      - ${DB_NETWORK}"
   PROD_EXTERNAL_NETWORK=$(printf '  %s:\n    external: true' "$DB_NETWORK")
 fi
 
 cat > aDespliegue/prod/docker-compose.yml <<YAML
 services:
-  ${PROJECT_SLUG}_php_prod:
+  ${PROD_PHP_SERVICE}:
+    image: ${PROD_PHP_NAME}
     build:
       context: ../..
       dockerfile: aDespliegue/prod/Dockerfile
-    container_name: ${PROJECT_SLUG}_php_prod
+    container_name: ${PROD_PHP_NAME}
     environment:
       APP_ENV: prod
       APP_DEBUG: "0"
     networks:
-      - ${PROJECT_SLUG}_prod_net
+      - ${PROD_NETWORK_NAME}
 ${PROD_DB_NETWORK}
 YAML
 
@@ -357,22 +455,22 @@ YAML
 
 cat >> aDespliegue/prod/docker-compose.yml <<YAML
 
-  ${PROJECT_SLUG}_nginx_prod:
+  ${PROD_NGINX_SERVICE}:
     image: nginx:alpine
-    container_name: ${PROJECT_SLUG}_nginx_prod
+    container_name: ${PROD_NGINX_NAME}
     ports:
       - "80:80"
       - "443:443"
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf
     depends_on:
-      - ${PROJECT_SLUG}_php_prod
+      - ${PROD_PHP_SERVICE}
     networks:
-      - ${PROJECT_SLUG}_prod_net
+      - ${PROD_NETWORK_NAME}
 
 networks:
-  ${PROJECT_SLUG}_prod_net:
-    name: ${PROJECT_SLUG}_prod_net
+  ${PROD_NETWORK_NAME}:
+    name: ${PROD_NETWORK_NAME}
 ${PROD_EXTERNAL_NETWORK}
 YAML
 
@@ -394,7 +492,7 @@ server {
     }
 
     location ~ ^/index\\.php(/|$) {
-        fastcgi_pass ${PROJECT_SLUG}_php_prod:9000;
+        fastcgi_pass ${PROD_PHP_SERVICE}:9000;
         fastcgi_split_path_info ^(.+\\.php)(/.*)$;
         include fastcgi_params;
 
@@ -418,7 +516,7 @@ cat > .devcontainer/devcontainer.json <<JSON
 {
   "name": "${PROJECT_NAME}",
   "dockerComposeFile": ["../aDespliegue/dev/docker-compose.yml"],
-  "service": "${PROJECT_SLUG}_php",
+  "service": "${DEV_PHP_SERVICE}",
   "workspaceFolder": "/workspace",
   "remoteUser": "root",
 
@@ -455,7 +553,7 @@ if ! $USE_SYMFONY; then
 {
   "name": "${PROJECT_NAME}",
   "dockerComposeFile": ["../aDespliegue/dev/docker-compose.yml"],
-  "service": "${PROJECT_SLUG}_php",
+  "service": "${DEV_PHP_SERVICE}",
   "workspaceFolder": "/workspace",
   "remoteUser": "root",
   "customizations": {
@@ -486,6 +584,7 @@ fi
 step "Generando .env"
 
 APP_SECRET=$(openssl rand -hex 16)
+DEV_DB_NAME="${DB_NAME:-${PROJECT_SLUG}}"
 DEV_DB_HOST="${DB_HOST:-host.docker.internal}"
 DEV_DB_PORT="${DB_PORT:-3306}"
 DEV_DB_USER="app"
@@ -524,8 +623,8 @@ DEFAULTS
     declare "DEFAULT_${key}=$value"
   done < "$DEFAULTS_FILE"
 
-  DEV_DB_USER="${DEFAULT_DB_USER:-app}"
-  DEV_DB_PASSWORD="${DEFAULT_DB_PASSWORD:-secret}"
+  DEV_DB_USER="${DB_USER:-${DEFAULT_DB_USER:-app}}"
+  DEV_DB_PASSWORD="${DB_PASSWORD:-${DEFAULT_DB_PASSWORD:-secret}}"
   DEV_DB_HOST="${DB_HOST:-${DEFAULT_DB_HOST:-host.docker.internal}}"
   DEV_DB_PORT="${DB_PORT:-${DEFAULT_DB_PORT:-3306}}"
   DEV_ADMIN_LOGIN="${ADMIN_LOGIN:-${DEFAULT_ADMIN_LOGIN:-admin}}"
@@ -542,12 +641,12 @@ ADMIN_PASSWORD=YOUR_ADMIN_PASSWORD
 ENV
 
 $USE_DB && cat >> .env.example <<ENV
-DB_NAME=${PROJECT_SLUG}
+DB_NAME=${DEV_DB_NAME}
 DB_USER=YOUR_DB_USER
 DB_PASSWORD=YOUR_DB_PASSWORD
 DB_HOST=YOUR_DB_HOST
 DB_PORT=3306
-DATABASE_URL=mysql://YOUR_DB_USER:YOUR_DB_PASSWORD@YOUR_DB_HOST:3306/${PROJECT_SLUG}
+DATABASE_URL=mysql://YOUR_DB_USER:YOUR_DB_PASSWORD@YOUR_DB_HOST:3306/${DEV_DB_NAME}
 
 
 $USE_JWT && cat >> .env.example <<ENV
@@ -566,12 +665,12 @@ ADMIN_PASSWORD=${DEV_ADMIN_PASSWORD}
 ENV
 
 $USE_DB && cat >> .env <<ENV
-DB_NAME=${PROJECT_SLUG}
+DB_NAME=${DEV_DB_NAME}
 DB_USER=${DEV_DB_USER}
 DB_PASSWORD=${DEV_DB_PASSWORD}
 DB_HOST=${DEV_DB_HOST}
 DB_PORT=${DEV_DB_PORT}
-DATABASE_URL=mysql://${DEV_DB_USER}:${DEV_DB_PASSWORD}@${DEV_DB_HOST}:${DEV_DB_PORT}/${PROJECT_SLUG}
+DATABASE_URL=mysql://${DEV_DB_USER}:${DEV_DB_PASSWORD}@${DEV_DB_HOST}:${DEV_DB_PORT}/${DEV_DB_NAME}
 ENV
 
 $USE_JWT && cat >> .env <<ENV
@@ -594,14 +693,14 @@ cat > Makefile <<MAKE
 .PHONY: up down build serve start stop sh cc logs logs-symfony ps migrate migration jwt-keys prod-build prod-up admin
 
 ENV_DIR = aDespliegue/dev
-RUN_PHP = docker compose -f \$(ENV_DIR)/docker-compose.yml exec -w /workspace ${PROJECT_SLUG}_php
+RUN_PHP = docker compose -f \$(ENV_DIR)/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE}
 
 up:
 	docker compose -f \$(ENV_DIR)/docker-compose.yml up -d
 
 down:
-	docker compose -f \$(ENV_DIR)/docker-compose.yml down
 	\$(RUN_PHP) symfony server:stop 2>/dev/null || true
+	docker compose -f \$(ENV_DIR)/docker-compose.yml down
 
 build:
 	docker compose -f \$(ENV_DIR)/docker-compose.yml build --no-cache
@@ -660,7 +759,7 @@ if ! $USE_SYMFONY; then
 .PHONY: up down build start stop sh logs ps prod-build prod-up
 
 ENV_DIR = aDespliegue/dev
-RUN_PHP = docker compose -f \$(ENV_DIR)/docker-compose.yml exec -w /workspace ${PROJECT_SLUG}_php
+RUN_PHP = docker compose -f \$(ENV_DIR)/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE}
 
 up:
 	docker compose -f \$(ENV_DIR)/docker-compose.yml up -d
@@ -706,10 +805,9 @@ admin:
 	  \$c = \$kernel->getContainer();\
 	  \$em = \$c->get('\''doctrine'\'')->getManager();\
 	  if (\$em->getRepository(App\\Entity\\User::class)->findOneBy(['\''login'\''=>\$adminLogin])) { echo '\''Ya existe.\n'\''; exit(0); }\
-	  \$h = \$c->get(Symfony\\Component\\PasswordHasher\\Hasher\\UserPasswordHasherInterface::class);\
 	  \$u = new App\\Entity\\User();\
 	  \$u->setLogin(\$adminLogin);\
-	  \$u->setPassword(\$h->hashPassword(\$u,\$adminPassword));\
+	  \$u->setPassword(password_hash(\$adminPassword, PASSWORD_BCRYPT));\
 	  \$u->setRoles(['\''ROLE_ADMIN'\'']);\
 	  \$u->setActivo(true);\
 	  \$em->persist(\$u); \$em->flush();\
@@ -753,15 +851,21 @@ if $USE_SYMFONY; then
 # 15. symfony new app
 # -----------------------------------------------------------------------------
 step "Creando proyecto Symfony en app/"
+SYMFONY_INSTALL="${SYMFONY_INSTALL:-minimal}"
+case "${SYMFONY_INSTALL}" in
+  webapp) SYMFONY_FLAGS="--webapp --debug"; SYMFONY_PACKAGE="symfony/website-skeleton" ;;
+  minimal) SYMFONY_FLAGS=""; SYMFONY_PACKAGE="symfony/skeleton" ;;
+  *) echo "Error: SYMFONY_INSTALL debe ser minimal o webapp."; exit 1 ;;
+esac
 
-SYMFONY_FLAGS=""
+docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} symfony new /workspace ${SYMFONY_FLAGS} --version=lts --no-git 2>/dev/null || docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} composer create-project --no-interaction ${SYMFONY_PACKAGE} /workspace
 
-# Usamos --webapp como base para tener flex habilitado; los paquetes específicos se instalan después
-
-docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${PROJECT_SLUG}_php symfony new /workspace --webapp --debug --version=lts --no-git 2>/dev/null || docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${PROJECT_SLUG}_php composer create-project symfony/skeleton /workspace
 
 # Ajustar permisos de los archivos creados para el usuario actual
-docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${PROJECT_SLUG}_php chown -R $(id -u):$(id -g) /workspace
+docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} chown -R $(id -u):$(id -g) /workspace
+
+# Desactivar recetas de Docker de Symfony Flex para evitar prompts interactivos
+docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} composer config extra.symfony.docker false
 
 # -----------------------------------------------------------------------------
 # 16. Instalar paquetes según módulos
@@ -769,17 +873,21 @@ docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${PROJEC
 step "Instalando paquetes seleccionados"
 
 sym_exec() {
-  docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${PROJECT_SLUG}_php \
+  docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} \
     bash -c "$1"
 }
 
-$USE_DB           && sym_exec "composer require symfony/orm-pack doctrine/doctrine-migrations-bundle"
-$USE_AUTH         && sym_exec "composer require symfony/security-bundle"
-$USE_JWT          && sym_exec "composer require lexik/jwt-authentication-bundle"
-$USE_ADMIN        && sym_exec "composer require easycorp/easyadmin-bundle"
+$USE_DB           && sym_exec "composer require --no-interaction symfony/orm-pack doctrine/doctrine-migrations-bundle"
+($USE_AUTH || $USE_ADMIN) && sym_exec "composer require --no-interaction symfony/twig-bundle"
+$USE_AUTH         && sym_exec "composer require --no-interaction symfony/security-bundle"
+$USE_JWT          && sym_exec "composer require --no-interaction lexik/jwt-authentication-bundle"
+$USE_ADMIN        && sym_exec "composer require --no-interaction easycorp/easyadmin-bundle"
 
 
-sym_exec "composer require --dev symfony/maker-bundle symfony/debug-bundle"
+sym_exec "composer require --no-interaction --dev symfony/maker-bundle symfony/debug-bundle"
+# Composer puede crear carpetas nuevas como root; normalizar antes de copiar stubs desde el host.
+docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} chown -R $(id -u):$(id -g) /workspace
+mkdir -p app/src app/templates app/config/packages
 
 # -----------------------------------------------------------------------------
 # 17. Copiar stubs de código base
@@ -839,22 +947,26 @@ cp .env app/.env.local
 cp .env.example app/.env.example
 if $USE_DB; then
   step "Verificando conexión a la base de datos"
-  if ! docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${PROJECT_SLUG}_php php -r "
+  if ! docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} php -r "
     require '/workspace/vendor/autoload.php';
     (new Symfony\Component\Dotenv\Dotenv())->bootEnv('/workspace/.env');
     \$host = \$_ENV['DB_HOST'] ?? 'host.docker.internal';
     \$port = \$_ENV['DB_PORT'] ?? 3306;
     \$user = \$_ENV['DB_USER'] ?? 'root';
     \$pass = \$_ENV['DB_PASSWORD'] ?? '';
+    \$dbName = \$_ENV['DB_NAME'] ?? '';
+
+    // 1. Verificar conexión al servidor (sin dbname)
     \$maxAttempts = 5;
+    \$serverConnected = false;
     for (\$i = 1; \$i <= \$maxAttempts; \$i++) {
       try {
         \$pdo = new PDO('mysql:host=' . \$host . ';port=' . \$port, \$user, \$pass, [
           PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
           PDO::ATTR_TIMEOUT => 2
         ]);
-        echo '  Conexión exitosa a la base de datos (' . \$host . ':' . \$port . ')' . PHP_EOL;
-        exit(0);
+        \$serverConnected = true;
+        break;
       } catch (Exception \$e) {
         if (\$i === \$maxAttempts) {
           echo '  Error: No se pudo conectar al servidor de base de datos: ' . \$e->getMessage() . PHP_EOL;
@@ -864,25 +976,47 @@ if $USE_DB; then
         sleep(2);
       }
     }
+
+    if (\$serverConnected) {
+      // 2. Verificar si la base de datos existe e intentar acceder a ella
+      try {
+        \$pdoDb = new PDO('mysql:host=' . \$host . ';port=' . \$port . ';dbname=' . \$dbName, \$user, \$pass, [
+          PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+          PDO::ATTR_TIMEOUT => 2
+        ]);
+        echo '  Conexión exitosa a la base de datos \'' . \$dbName . '\'' . PHP_EOL;
+        exit(0);
+      } catch (PDOException \$e) {
+        if (\$e->getCode() == 1049) {
+          echo '❌ Error crítico: La base de datos \'' . \$dbName . '\' no existe en el servidor.' . PHP_EOL;
+          echo '   Por favor, crea la base de datos en tu MySQL y otorga los privilegios al usuario \'' . \$user . '\'.' . PHP_EOL;
+          echo '   Puedes crearla con el siguiente comando SQL (ejecutado como root):' . PHP_EOL;
+          echo '     CREATE DATABASE \`' . \$dbName . '\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;' . PHP_EOL;
+          echo '     GRANT ALL PRIVILEGES ON \`' . \$dbName . '\`.* TO \'' . \$user . '\'@\'%\';' . PHP_EOL;
+          echo '     FLUSH PRIVILEGES;' . PHP_EOL;
+          exit(1);
+        } else {
+          echo '❌ Error crítico de conexión a la base de datos \'' . \$dbName . '\': ' . \$e->getMessage() . PHP_EOL;
+          exit(1);
+        }
+      }
+    }
   "; then
-     echo "❌ Error crítico: No se pudo establecer conexión con la base de datos."
-     echo "   Por favor, verifica:"
-     echo "   1. Que el servidor de base de datos en '${DEV_DB_HOST}:${DEV_DB_PORT}' esté encendido y operativo."
-     echo "   2. Que el usuario '${DEV_DB_USER}' tenga permisos de acceso."
-     echo "   3. Que la red o host estén configurados correctamente."
      exit 1
   fi
-
-  sym_exec "php bin/console doctrine:database:create --if-not-exists 2>/dev/null || true"
 fi
 
-# Crear usuario admin por defecto si USE_AUTH está activo
 if $USE_AUTH && $USE_DB; then
   step "Creando usuario admin por defecto"
-  sym_exec "php bin/console make:migration --no-interaction 2>/dev/null || true"
-  sym_exec "php bin/console doctrine:migrations:migrate --no-interaction 2>/dev/null || true"
+  set +e
+  sym_exec "php bin/console make:migration --no-interaction"
+  if ! sym_exec "php bin/console doctrine:migrations:migrate --no-interaction"; then
+    echo "  ⚠ Migraciones fallidas o no registradas. Sincronizando esquema de base de datos directamente..."
+    sym_exec "php bin/console doctrine:schema:update --force"
+  fi
+  set -e
 
-  docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${PROJECT_SLUG}_php php -r "
+  if ! docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} php -r "
     require '/workspace/vendor/autoload.php';
     (new Symfony\Component\Dotenv\Dotenv())->bootEnv('/workspace/.env');
     \$kernel = new App\Kernel('dev', true);
@@ -895,18 +1029,20 @@ if $USE_AUTH && $USE_DB; then
     if (\$repo->findOneBy(['login' => \$adminLogin])) {
       echo 'Usuario admin ya existe.' . PHP_EOL; exit(0);
     }
-    \$hasher = \$container->get(Symfony\\Component\\PasswordHasher\\Hasher\\UserPasswordHasherInterface::class);
     \$user = new App\\Entity\\User();
     \$user->setLogin(\$adminLogin);
-    \$user->setPassword(\$hasher->hashPassword(\$user, \$adminPassword));
+    \$user->setPassword(password_hash(\$adminPassword, PASSWORD_BCRYPT));
     \$user->setRoles(['ROLE_ADMIN']);
     \$user->setActivo(true);
     \$em->persist(\$user);
     \$em->flush();
     echo 'Usuario admin creado.' . PHP_EOL;
-  " 2>/dev/null \
-    && echo "  ✓ Usuario admin creado con ADMIN_LOGIN / ADMIN_PASSWORD" \
-    || echo "  ⚠ No se pudo crear el admin. Corré: make migrate && make admin"
+  "; then
+    echo "❌ Error crítico: No se pudo crear el usuario admin inicial."
+    echo "   Verifica permisos de base de datos para ${DEV_DB_USER} sobre ${DEV_DB_NAME}."
+    exit 1
+  fi
+  echo "  ✓ Usuario admin creado con ADMIN_LOGIN / ADMIN_PASSWORD"
 fi
 
 $USE_JWT && {
@@ -936,7 +1072,7 @@ JSON
 fi
 
 # Asegurar que todos los archivos nuevos creados sean del usuario host
-docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${PROJECT_SLUG}_php chown -R $(id -u):$(id -g) /workspace
+docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} chown -R $(id -u):$(id -g) /workspace
 
 # -----------------------------------------------------------------------------
 # 18. Listo
