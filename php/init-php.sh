@@ -932,8 +932,8 @@ if [[ -d "$STUBS_DIR" ]]; then
     # Inyectar item de menú en DashboardController si existe el marcador
     DASHBOARD="app/src/Controller/Admin/DashboardController.php"
     if [[ -f "$DASHBOARD" ]]; then
-      sed -i 's|.*// @@USER_MENU_ITEM@@.*|        yield MenuItem::section('\''Seguridad'\'');\n        yield MenuItem::linkToCrud('\''Usuarios'\'', '\''fa fa-users'\'', \\App\\Entity\\User::class);|' "$DASHBOARD"
-      echo "  ✓ Item 'Usuarios' agregado al DashboardController"
+      sed -i 's|.*// @@USER_MENU_ITEM@@.*|        yield MenuItem::section('\''Seguridad'\'');\n        yield MenuItem::linkTo(\\App\\Controller\\Admin\\UserCrudController::class, '\''Usuarios'\'', '\''fa fa-users'\'');\n\n        yield MenuItem::section('\''Acciones'\'');\n        yield MenuItem::linkToLogout('\''Salir'\'', '\''fa fa-sign-out-alt text-danger'\'');|' "$DASHBOARD"
+      echo "  ✓ Items 'Usuarios' y 'Salir' agregados al DashboardController"
     fi
   fi
 

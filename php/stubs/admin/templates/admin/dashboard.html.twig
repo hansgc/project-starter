@@ -1,0 +1,55 @@
+{% extends '@EasyAdmin/page/content.html.twig' %}
+
+{% block content_title %}Panel de Control{% endblock %}
+
+{% block main %}
+    <div class="card p-4 shadow-sm border-0 bg-white" style="border-radius: 12px; max-width: 800px; margin-top: 1rem;">
+        <div class="d-flex align-items-center mb-3">
+            <div class="bg-primary text-white rounded-circle d-flex align-items-center justify-content-center" style="width: 48px; height: 48px; font-size: 1.5rem; font-weight: bold; margin-right: 15px;">
+                {{ app.user.login|slice(0, 1)|upper }}
+            </div>
+            <div>
+                <h3 class="fw-bold mb-0" style="color: #2c3e50;">¡Bienvenido, {{ app.user.login }}!</h3>
+                <p class="text-muted mb-0">Has iniciado sesión correctamente en el sistema.</p>
+            </div>
+        </div>
+        
+        <hr class="my-4" style="opacity: 0.15;">
+        
+        <p class="text-secondary mb-4">Desde aquí puedes gestionar los diferentes módulos de la aplicación. Utiliza el menú lateral izquierdo para navegar:</p>
+        
+        <div class="row g-3">
+            <div class="col-md-6">
+                <a href="{{ path('admin', {crudAction: 'index', crudControllerFqcn: 'App\\Controller\\Admin\\UserCrudController'}) }}" class="d-block p-3 border rounded text-decoration-none bg-light hover-shadow" style="transition: all 0.2s;">
+                    <div class="d-flex align-items-center">
+                        <i class="fa fa-users text-primary fs-3 me-3"></i>
+                        <div>
+                            <h5 class="mb-1 fw-bold text-dark">Gestión de Usuarios</h5>
+                            <p class="mb-0 text-muted small">Crear, editar y dar permisos a usuarios.</p>
+                        </div>
+                    </div>
+                </a>
+            </div>
+            
+            <div class="col-md-6">
+                <a href="{{ path('app_logout') }}" class="d-block p-3 border rounded text-decoration-none bg-light hover-shadow" style="transition: all 0.2s;">
+                    <div class="d-flex align-items-center">
+                        <i class="fa fa-sign-out text-danger fs-3 me-3"></i>
+                        <div>
+                            <h5 class="mb-1 fw-bold text-dark">Cerrar Sesión</h5>
+                            <p class="mb-0 text-muted small">Salir de forma segura de tu cuenta.</p>
+                        </div>
+                    </div>
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        .hover-shadow:hover {
+            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+            transform: translateY(-2px);
+            border-color: var(--primary-color, #4e73df) !important;
+        }
+    </style>
+{% endblock %}

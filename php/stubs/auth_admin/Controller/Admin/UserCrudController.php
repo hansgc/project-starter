@@ -4,6 +4,7 @@ namespace App\Controller\Admin;
 
 use App\Controller\Admin\Base\BaseCrudController;
 use App\Entity\User;
+use EasyCorp\Bundle\EasyAdminBundle\Attribute\AdminRoute;
 use EasyCorp\Bundle\EasyAdminBundle\Config\Action;
 use EasyCorp\Bundle\EasyAdminBundle\Config\Actions;
 use EasyCorp\Bundle\EasyAdminBundle\Config\Crud;
@@ -135,6 +136,7 @@ class UserCrudController extends BaseCrudController
     // Acción custom: resetear password
     // -------------------------------------------------------------------------
 
+    #[AdminRoute]
     public function resetPassword(AdminContext $context): Response
     {
         /** @var User $user */
