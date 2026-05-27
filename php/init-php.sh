@@ -610,9 +610,9 @@ ADMIN_LOGIN=admin
 ADMIN_PASSWORD=change_me_admin_password
 JWT_PASSPHRASE=dev_jwt_passphrase
 DEFAULTS
-    echo "  Editá ~/.symfony-defaults con tus credenciales reales antes de continuar."
-    echo "  Luego volvé a correr el script."
-    exit 0
+    echo "  ~/.symfony-defaults creado con valores de ejemplo."
+    echo "  Tip: editalo con tus credenciales reales para futuros proyectos."
+    echo "  Continuando con las credenciales definidas en el archivo .conf..."
   fi
 
   # Cargar defaults (ignorar comentarios y líneas vacías)
@@ -1008,11 +1008,35 @@ fi
 
 if $USE_AUTH && $USE_DB; then
   step "Creando usuario admin por defecto"
+
+  # Verificar si la base de datos ya tiene tablas (no está vacía)
+  DB_HAS_TABLES=$(docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} php -r "
+    require '/workspace/vendor/autoload.php';
+    (new Symfony\Component\Dotenv\Dotenv())->bootEnv('/workspace/.env');
+    \$host = \$_ENV['DB_HOST'] ?? 'host.docker.internal';
+    \$port = \$_ENV['DB_PORT'] ?? 3306;
+    \$user = \$_ENV['DB_USER'] ?? 'root';
+    \$pass = \$_ENV['DB_PASSWORD'] ?? '';
+    \$dbName = \$_ENV['DB_NAME'] ?? '';
+    try {
+      \$pdo = new PDO('mysql:host=' . \$host . ';port=' . \$port . ';dbname=' . \$dbName, \$user, \$pass);
+      \$count = (int) \$pdo->query('SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()')->fetchColumn();
+      echo \$count > 0 ? 'true' : 'false';
+    } catch (Exception \$e) {
+      echo 'false';
+    }
+  " 2>/dev/null | tr -d '[:space:]')
+
   set +e
-  sym_exec "php bin/console make:migration --no-interaction"
-  if ! sym_exec "php bin/console doctrine:migrations:migrate --no-interaction"; then
-    echo "  ⚠ Migraciones fallidas o no registradas. Sincronizando esquema de base de datos directamente..."
-    sym_exec "php bin/console doctrine:schema:update --force"
+  if [[ "$DB_HAS_TABLES" == "true" ]]; then
+    echo "  ℹ️  La base de datos '${DEV_DB_NAME}' ya contiene tablas. Se omite la migración."
+  else
+    echo "  La base de datos está vacía. Ejecutando migraciones..."
+    sym_exec "php bin/console make:migration --no-interaction"
+    if ! sym_exec "php bin/console doctrine:migrations:migrate --no-interaction"; then
+      echo "  ⚠ Migraciones fallidas o no registradas. Sincronizando esquema de base de datos directamente..."
+      sym_exec "php bin/console doctrine:schema:update --force"
+    fi
   fi
   set -e
 
