@@ -1027,9 +1027,32 @@ if $USE_AUTH && $USE_DB; then
     }
   " 2>/dev/null | tr -d '[:space:]')
 
+  # Verificar si la base de datos ya tiene la tabla de usuarios
+  DB_HAS_USER_TABLE=$(docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} php -r "
+    require '/workspace/vendor/autoload.php';
+    (new Symfony\Component\Dotenv\Dotenv())->bootEnv('/workspace/.env');
+    \$host = \$_ENV['DB_HOST'] ?? 'host.docker.internal';
+    \$port = \$_ENV['DB_PORT'] ?? 3306;
+    \$user = \$_ENV['DB_USER'] ?? 'root';
+    \$pass = \$_ENV['DB_PASSWORD'] ?? '';
+    \$dbName = \$_ENV['DB_NAME'] ?? '';
+    try {
+      \$pdo = new PDO('mysql:host=' . \$host . ';port=' . \$port . ';dbname=' . \$dbName, \$user, \$pass);
+      \$stmt = \$pdo->query(\"SHOW TABLES LIKE 'user'\");
+      echo \$stmt && \$stmt->rowCount() > 0 ? 'true' : 'false';
+    } catch (Exception \$e) {
+      echo 'false';
+    }
+  " 2>/dev/null | tr -d '[:space:]')
+
+  SKIP_ADMIN_CREATION=false
   set +e
   if [[ "$DB_HAS_TABLES" == "true" ]]; then
-    echo "  ℹ️  La base de datos '${DEV_DB_NAME}' ya contiene tablas. Se omite la migración."
+    echo "  ℹ️  La base de datos '${DEV_DB_NAME}' ya contiene tablas. Se omite la migración por seguridad."
+    if [[ "$DB_HAS_USER_TABLE" != "true" ]]; then
+      echo "  ⚠️  Advertencia: La tabla 'user' no existe. Se omitirá la creación del administrador inicial."
+      SKIP_ADMIN_CREATION=true
+    fi
   else
     echo "  La base de datos está vacía. Ejecutando migraciones..."
     sym_exec "php bin/console make:migration --no-interaction"
@@ -1040,33 +1063,37 @@ if $USE_AUTH && $USE_DB; then
   fi
   set -e
 
-  if ! docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} php -r "
-    require '/workspace/vendor/autoload.php';
-    (new Symfony\Component\Dotenv\Dotenv())->bootEnv('/workspace/.env');
-    \$kernel = new App\Kernel('dev', true);
-    \$kernel->boot();
-    \$adminLogin = \$_ENV['ADMIN_LOGIN'] ?: getenv('ADMIN_LOGIN') ?: 'admin';
-    \$adminPassword = \$_ENV['ADMIN_PASSWORD'] ?: getenv('ADMIN_PASSWORD') ?: 'change_me_admin_password';
-    \$container = \$kernel->getContainer();
-    \$em = \$container->get('doctrine')->getManager();
-    \$repo = \$em->getRepository(App\Entity\User::class);
-    if (\$repo->findOneBy(['login' => \$adminLogin])) {
-      echo 'Usuario admin ya existe.' . PHP_EOL; exit(0);
-    }
-    \$user = new App\\Entity\\User();
-    \$user->setLogin(\$adminLogin);
-    \$user->setPassword(password_hash(\$adminPassword, PASSWORD_BCRYPT));
-    \$user->setRoles(['ROLE_ADMIN']);
-    \$user->setActivo(true);
-    \$em->persist(\$user);
-    \$em->flush();
-    echo 'Usuario admin creado.' . PHP_EOL;
-  "; then
-    echo "❌ Error crítico: No se pudo crear el usuario admin inicial."
-    echo "   Verifica permisos de base de datos para ${DEV_DB_USER} sobre ${DEV_DB_NAME}."
-    exit 1
+  if [[ "$SKIP_ADMIN_CREATION" == "true" ]]; then
+    echo "  ℹ️  Creación del usuario administrador omitida."
+  else
+    if ! docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} php -r "
+      require '/workspace/vendor/autoload.php';
+      (new Symfony\Component\Dotenv\Dotenv())->bootEnv('/workspace/.env');
+      \$kernel = new App\Kernel('dev', true);
+      \$kernel->boot();
+      \$adminLogin = \$_ENV['ADMIN_LOGIN'] ?: getenv('ADMIN_LOGIN') ?: 'admin';
+      \$adminPassword = \$_ENV['ADMIN_PASSWORD'] ?: getenv('ADMIN_PASSWORD') ?: 'change_me_admin_password';
+      \$container = \$kernel->getContainer();
+      \$em = \$container->get('doctrine')->getManager();
+      \$repo = \$em->getRepository(App\Entity\User::class);
+      if (\$repo->findOneBy(['login' => \$adminLogin])) {
+        echo 'Usuario admin ya existe.' . PHP_EOL; exit(0);
+      }
+      \$user = new App\\Entity\\User();
+      \$user->setLogin(\$adminLogin);
+      \$user->setPassword(password_hash(\$adminPassword, PASSWORD_BCRYPT));
+      \$user->setRoles(['ROLE_ADMIN']);
+      \$user->setActivo(true);
+      \$em->persist(\$user);
+      \$em->flush();
+      echo 'Usuario admin creado.' . PHP_EOL;
+    "; then
+      echo "❌ Error crítico: No se pudo crear el usuario admin inicial."
+      echo "   Verifica permisos de base de datos para ${DEV_DB_USER} sobre ${DEV_DB_NAME}."
+      exit 1
+    fi
+    echo "  ✓ Usuario admin creado con ADMIN_LOGIN / ADMIN_PASSWORD"
   fi
-  echo "  ✓ Usuario admin creado con ADMIN_LOGIN / ADMIN_PASSWORD"
 fi
 
 $USE_JWT && {
