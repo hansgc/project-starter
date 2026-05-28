@@ -290,10 +290,10 @@ step "Generando Dockerfile dev"
 
 if $USE_SYMFONY; then
   DEV_EXTENSIONS="intl opcache zip"
-  DEV_APT="git curl unzip libicu-dev libonig-dev libxml2-dev libzip-dev"
+  DEV_APT="wget git curl unzip libicu-dev libonig-dev libxml2-dev libzip-dev procps"
 else
   DEV_EXTENSIONS=""
-  DEV_APT="curl"
+  DEV_APT="wget curl procps"
 fi
 $USE_DB        && DEV_APT+=" default-libmysqlclient-dev"         && DEV_EXTENSIONS+=" pdo pdo_mysql"
 
