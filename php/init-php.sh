@@ -904,6 +904,8 @@ else
 fi
 
 if $USE_DB; then
+  # Symfony/Doctrine puede dejar una DATABASE_URL de ejemplo activa; deshabilitarla antes de escribir la real.
+  sed -i -E 's/^DATABASE_URL=/# DATABASE_URL=/' app/.env
   cat >> app/.env <<ENV
 
 DATABASE_URL=${DATABASE_URL}
