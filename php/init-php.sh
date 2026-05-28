@@ -319,7 +319,7 @@ RUN curl -sS https://get.symfony.com/cli/installer | bash \\
  && mkdir -p /root/.config \\
  && (mv /root/.symfony5 /root/.config/symfony-cli 2>/dev/null || true)
 
-WORKDIR /workspace
+WORKDIR /workspace/app
 
 EXPOSE 8000
 
@@ -334,11 +334,11 @@ RUN apt-get update && apt-get install -y \\
     ${DEV_INSTALL_EXTENSIONS} \\
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /workspace
+WORKDIR /workspace/app
 
 EXPOSE 8000
 
-CMD ["php", "-S", "0.0.0.0:8000", "-t", "/workspace/public"]
+CMD ["php", "-S", "0.0.0.0:8000", "-t", "/workspace/app/public"]
 DOCKERFILE
 fi
 
@@ -365,7 +365,7 @@ services:
     ports:
       - "${PORT_DEV}:8000"
     volumes:
-      - ../../app:/workspace
+      - ../../:/workspace
     environment:
       APP_ENV: dev
       APP_DEBUG: "1"
@@ -564,13 +564,8 @@ cat > .devcontainer/devcontainer.json <<JSON
           "editor.defaultFormatter": "junstyle.php-cs-fixer"
         }
       }
-    }
   },
-
-  
-  },
-
-  "postStartCommand": "cd /workspace && composer install && symfony server:start --no-tls --port=8000 --daemon"
+  "postStartCommand": "cd /workspace/app && composer install && symfony server:start --no-tls --port=8000 --daemon"
 }
 JSON
 
@@ -683,7 +678,7 @@ cat > Makefile <<MAKE
 .PHONY: up down build serve start stop sh cc logs logs-symfony ps migrate migration jwt-keys prod-build prod-up
 
 ENV_DIR = aDespliegue/dev
-RUN_PHP = docker compose -f \$(ENV_DIR)/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE}
+RUN_PHP = docker compose -f \$(ENV_DIR)/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE}
 
 up:
 	docker compose -f \$(ENV_DIR)/docker-compose.yml up -d
@@ -749,7 +744,7 @@ if ! $USE_SYMFONY; then
 .PHONY: up down build start stop sh logs ps prod-build prod-up
 
 ENV_DIR = aDespliegue/dev
-RUN_PHP = docker compose -f \$(ENV_DIR)/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE}
+RUN_PHP = docker compose -f \$(ENV_DIR)/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE}
 
 up:
 	docker compose -f \$(ENV_DIR)/docker-compose.yml up -d
