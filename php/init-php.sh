@@ -11,9 +11,6 @@
 # =============================================================================
 
 set -e
-
-
-
 echo ""
 echo "╔══════════════════════════════════════════╗"
 echo "║      PHP Docker Project Initializer      ║"
@@ -23,6 +20,26 @@ echo ""
 # -----------------------------------------------------------------------------
 # Helpers
 # -----------------------------------------------------------------------------
+urlencode() {
+  local string="${1}"
+  local strlen=${#string}
+  local encoded=""
+  local pos c o
+  for (( pos=0 ; pos<strlen ; pos++ )); do
+     c=${string:$pos:1}
+     case "$c" in
+        [-_.~a-zA-Z0-9] ) o="${c}" ;;
+        * )               printf -v o '%%%02X' "'$c"
+     esac
+     encoded+="${o}"
+  done
+  echo "${encoded}"
+}
+
+escape_symfony_env_percents() {
+  echo "${1//%/%%}"
+}
+
 ask_yn() {
   local label=$1
   local default=${2:-n}
@@ -71,7 +88,7 @@ if [[ -n "$CONFIG_FILE" ]]; then
   while IFS='=' read -r key value; do
     [[ "$key" =~ ^#.*$ || -z "$key" ]] && continue
     key=$(echo "$key" | tr -d ' ')
-    value=$(echo "$value" | tr -d '"' | tr -d "'" | sed 's/[[:space:]]*#.*//' | xargs)
+    value=$(echo "$value" | tr -d '"' | tr -d "'" | sed 's/[[:space:]][[:space:]]*#.*//' | xargs)
     declare "$key=$value"
   done < "$CONFIG_FILE"
 
@@ -296,7 +313,7 @@ WORKDIR /workspace
 
 EXPOSE 8000
 
-CMD ["symfony", "server:start", "--no-tls", "--port=8000", "--allow-all-ip"]
+CMD ["bash", "-c", "rm -f /root/.config/symfony-cli/var/*.pid /root/.config/symfony-cli/var/*.port && exec symfony server:start --no-tls --port=8000 --allow-all-ip"]
 DOCKERFILE
 else
   cat > aDespliegue/dev/Dockerfile <<DOCKERFILE
@@ -648,13 +665,11 @@ DB_HOST=YOUR_DB_HOST
 DB_PORT=3306
 DATABASE_URL=mysql://YOUR_DB_USER:YOUR_DB_PASSWORD@YOUR_DB_HOST:3306/${DEV_DB_NAME}
 
-
 $USE_JWT && cat >> .env.example <<ENV
 JWT_SECRET_KEY=%kernel.project_dir%/config/jwt/private.pem
 JWT_PUBLIC_KEY=%kernel.project_dir%/config/jwt/public.pem
 JWT_PASSPHRASE=YOUR_JWT_PASSPHRASE
 ENV
-
 
 # ── .env real (no se commitea, usa credenciales del ~/.symfony-defaults) ──────
 cat > .env <<ENV
@@ -664,25 +679,27 @@ ADMIN_LOGIN=${DEV_ADMIN_LOGIN}
 ADMIN_PASSWORD=${DEV_ADMIN_PASSWORD}
 ENV
 
-$USE_DB && cat >> .env <<ENV
+if $USE_DB; then
+  ENCODED_DB_USER=$(urlencode "${DEV_DB_USER}")
+  ENCODED_DB_PASSWORD=$(urlencode "${DEV_DB_PASSWORD}")
+  DATABASE_URL="mysql://${ENCODED_DB_USER}:${ENCODED_DB_PASSWORD}@${DEV_DB_HOST}:${DEV_DB_PORT}/${DEV_DB_NAME}"
+  DATABASE_URL=$(escape_symfony_env_percents "${DATABASE_URL}")
+  cat >> .env <<ENV
 DB_NAME=${DEV_DB_NAME}
 DB_USER=${DEV_DB_USER}
 DB_PASSWORD=${DEV_DB_PASSWORD}
 DB_HOST=${DEV_DB_HOST}
 DB_PORT=${DEV_DB_PORT}
-DATABASE_URL=mysql://${DEV_DB_USER}:${DEV_DB_PASSWORD}@${DEV_DB_HOST}:${DEV_DB_PORT}/${DEV_DB_NAME}
+# Nota: DATABASE_URL escapa % como %% para Symfony; la clave real es DB_PASSWORD.
+DATABASE_URL=${DATABASE_URL}
 ENV
+fi
 
 $USE_JWT && cat >> .env <<ENV
 JWT_SECRET_KEY=%kernel.project_dir%/config/jwt/private.pem
 JWT_PUBLIC_KEY=%kernel.project_dir%/config/jwt/public.pem
 JWT_PASSPHRASE=${DEV_JWT_PASSPHRASE}
 ENV
-
-
-
-
-
 
 # -----------------------------------------------------------------------------
 # 12. Makefile en la raíz
@@ -860,7 +877,6 @@ esac
 
 docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} symfony new /workspace ${SYMFONY_FLAGS} --version=lts --no-git 2>/dev/null || docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} composer create-project --no-interaction ${SYMFONY_PACKAGE} /workspace
 
-
 # Ajustar permisos de los archivos creados para el usuario actual
 docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} chown -R $(id -u):$(id -g) /workspace
 
@@ -882,7 +898,6 @@ $USE_DB           && sym_exec "composer require --no-interaction symfony/orm-pac
 $USE_AUTH         && sym_exec "composer require --no-interaction symfony/security-bundle"
 $USE_JWT          && sym_exec "composer require --no-interaction lexik/jwt-authentication-bundle"
 $USE_ADMIN        && sym_exec "composer require --no-interaction easycorp/easyadmin-bundle"
-
 
 sym_exec "composer require --no-interaction --dev symfony/maker-bundle symfony/debug-bundle"
 # Composer puede crear carpetas nuevas como root; normalizar antes de copiar stubs desde el host.
@@ -941,7 +956,7 @@ else
   echo "  (No se encontró el directorio stubs/, se omite este paso)"
 fi
 
-# Las credenciales reales van a app/.env.local (no se commitea, anula app/.env de Symfony)
+# app/.env.local anula app/.env de Symfony durante la inicialización
 cp .env app/.env.local
 # .env.example va al repo como plantilla de referencia
 cp .env.example app/.env.example
@@ -1122,8 +1137,16 @@ PHP
 JSON
 fi
 
+if $USE_DB && [[ -f app/.env.local ]]; then
+  # Symfony solo necesita DATABASE_URL; las variables DB_* son internas del inicializador.
+  perl -0pi -e 's/^DB_(?:NAME|USER|PASSWORD|HOST|PORT)=.*\n//mg; s/^# Nota: DATABASE_URL.*\n//mg' app/.env.local
+fi
+
 # Asegurar que todos los archivos nuevos creados sean del usuario host
 docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} chown -R $(id -u):$(id -g) /workspace
+
+# Reiniciar el contenedor para que el servidor interno detecte los nuevos archivos
+docker compose -f aDespliegue/dev/docker-compose.yml restart ${DEV_PHP_SERVICE}
 
 # -----------------------------------------------------------------------------
 # 18. Listo
