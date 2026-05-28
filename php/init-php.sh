@@ -665,28 +665,13 @@ DEFAULTS
   DEV_JWT_PASSPHRASE="${DEFAULT_JWT_PASSPHRASE:-changeme}"
 fi
 
-# ── .env real (no se commitea, usa credenciales locales) ─────────────────────
-cat > .env <<ENV
-APP_ENV=dev
-APP_SECRET=${APP_SECRET}
-ENV
-
+# ── Variables que se inyectarán en app/.env después de crear Symfony ─────────
+DATABASE_URL=""
 if $USE_DB; then
   ENCODED_DB_USER=$(urlencode "${DEV_DB_USER}")
   ENCODED_DB_PASSWORD=$(urlencode "${DEV_DB_PASSWORD}")
   DATABASE_URL="mysql://${ENCODED_DB_USER}:${ENCODED_DB_PASSWORD}@${DEV_DB_HOST}:${DEV_DB_PORT}/${DEV_DB_NAME}"
   DATABASE_URL=$(escape_symfony_env_percents "${DATABASE_URL}")
-  cat >> .env <<ENV
-DATABASE_URL=${DATABASE_URL}
-ENV
-fi
-
-if $USE_JWT; then
-  cat >> .env <<ENV
-JWT_SECRET_KEY=%kernel.project_dir%/config/jwt/private.pem
-JWT_PUBLIC_KEY=%kernel.project_dir%/config/jwt/public.pem
-JWT_PASSPHRASE=${DEV_JWT_PASSPHRASE}
-ENV
 fi
 
 # -----------------------------------------------------------------------------
@@ -801,8 +786,6 @@ fi
 # 13. .gitignore
 # -----------------------------------------------------------------------------
 cat > .gitignore <<GIT
-.env
-app/.env.local
 app/vendor/
 app/var/
 app/public/bundles/
@@ -859,7 +842,7 @@ sym_exec() {
 
 $USE_DB           && sym_exec "composer require --no-interaction symfony/orm-pack doctrine/doctrine-migrations-bundle"
 ($USE_AUTH || $USE_ADMIN) && sym_exec "composer require --no-interaction symfony/twig-bundle"
-$USE_AUTH         && sym_exec "composer require --no-interaction symfony/security-bundle"
+$USE_AUTH         && sym_exec "composer require --no-interaction symfony/security-bundle symfony/validator"
 $USE_JWT          && sym_exec "composer require --no-interaction lexik/jwt-authentication-bundle"
 $USE_ADMIN        && sym_exec "composer require --no-interaction easycorp/easyadmin-bundle"
 
@@ -920,8 +903,12 @@ else
   echo "  (No se encontró el directorio stubs/, se omite este paso)"
 fi
 
-# app/.env.local anula app/.env de Symfony durante la inicialización
-cp .env app/.env.local
+if $USE_DB; then
+  cat >> app/.env <<ENV
+
+DATABASE_URL=${DATABASE_URL}
+ENV
+fi
 if $USE_DB; then
   step "Verificando conexión a la base de datos"
   if ! docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} php -r "
@@ -1163,11 +1150,6 @@ step "Generando leeme.txt"
   fi
 } > leeme.txt
 
-if $USE_DB && [[ -f app/.env.local ]]; then
-  # Symfony solo necesita DATABASE_URL; DB_* y ADMIN_* son internas del inicializador.
-  perl -0pi -e 's/^(?:DB_(?:NAME|USER|PASSWORD|HOST|PORT)|ADMIN_(?:LOGIN|PASSWORD))=.*\n//mg; s/^# Nota: DATABASE_URL.*\n//mg' app/.env.local
-fi
-
 # Asegurar que todos los archivos nuevos creados sean del usuario host
 docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} chown -R $(id -u):$(id -g) /workspace
 
@@ -1194,7 +1176,6 @@ else
 fi
 echo "  ├── Makefile"
 echo "  ├── leeme.txt"
-echo "  └── .env"
 echo ""
 echo "  🌐  App:     http://localhost:${PORT_DEV}"
 if $USE_AUTH && $ADMIN_CREDENTIALS_CONFIGURED; then
