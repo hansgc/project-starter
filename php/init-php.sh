@@ -103,6 +103,8 @@ if [[ -n "$CONFIG_FILE" ]]; then
   # Aplicar defaults para campos opcionales
   PHP_VERSION="${PHP_VERSION:-8.4}"
   HTTP_PORT="${HTTP_PORT:-8080}"
+  PROD_HTTP_PORT="${PROD_HTTP_PORT:-80}"
+  PROD_URLS="${PROD_URLS:-}"
   DB_NETWORK="${DB_NETWORK:-}"
   SYMFONY_INSTALL="${SYMFONY_INSTALL:-minimal}"
 
@@ -129,6 +131,8 @@ else
 
   PHP_VERSION=$(ask_input "Versión de PHP" "8.3")
   HTTP_PORT=$(ask_input "Puerto HTTP local (dev)" "8080")
+  PROD_HTTP_PORT=$(ask_input "Puerto HTTP producción" "80")
+  PROD_URLS=""
   SYMFONY_INSTALL="minimal"
   DB_NETWORK=""
 
@@ -476,8 +480,7 @@ cat >> aDespliegue/prod/docker-compose.yml <<YAML
     image: nginx:alpine
     container_name: ${PROD_NGINX_NAME}
     ports:
-      - "80:80"
-      - "443:443"
+      - "${PROD_HTTP_PORT}:80"
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf
     depends_on:
@@ -606,8 +609,13 @@ DEV_DB_HOST="${DB_HOST:-host.docker.internal}"
 DEV_DB_PORT="${DB_PORT:-3306}"
 DEV_DB_USER="app"
 DEV_DB_PASSWORD="secret"
-DEV_ADMIN_LOGIN="${ADMIN_LOGIN:-admin}"
-DEV_ADMIN_PASSWORD="${ADMIN_PASSWORD:-change_me_admin_password}"
+DEV_ADMIN_LOGIN="${ADMIN_LOGIN:-}"
+DEV_ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
+ADMIN_CREDENTIALS_CONFIGURED=false
+ADMIN_USER_CREATED=false
+if [[ -n "${DEV_ADMIN_LOGIN}" && -n "${DEV_ADMIN_PASSWORD}" ]]; then
+  ADMIN_CREDENTIALS_CONFIGURED=true
+fi
 DEV_JWT_PASSPHRASE="changeme"
 
 if $USE_SYMFONY; then
@@ -623,8 +631,6 @@ DB_USER=app
 DB_PASSWORD=secret
 DB_HOST=host.docker.internal
 DB_PORT=3306
-ADMIN_LOGIN=admin
-ADMIN_PASSWORD=change_me_admin_password
 JWT_PASSPHRASE=dev_jwt_passphrase
 DEFAULTS
     echo "  ~/.symfony-defaults creado con valores de ejemplo."
@@ -644,8 +650,12 @@ DEFAULTS
   DEV_DB_PASSWORD="${DB_PASSWORD:-${DEFAULT_DB_PASSWORD:-secret}}"
   DEV_DB_HOST="${DB_HOST:-${DEFAULT_DB_HOST:-host.docker.internal}}"
   DEV_DB_PORT="${DB_PORT:-${DEFAULT_DB_PORT:-3306}}"
-  DEV_ADMIN_LOGIN="${ADMIN_LOGIN:-${DEFAULT_ADMIN_LOGIN:-admin}}"
-  DEV_ADMIN_PASSWORD="${ADMIN_PASSWORD:-${DEFAULT_ADMIN_PASSWORD:-change_me_admin_password}}"
+  DEV_ADMIN_LOGIN="${ADMIN_LOGIN:-}"
+  DEV_ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
+  ADMIN_CREDENTIALS_CONFIGURED=false
+  if [[ -n "${DEV_ADMIN_LOGIN}" && -n "${DEV_ADMIN_PASSWORD}" ]]; then
+    ADMIN_CREDENTIALS_CONFIGURED=true
+  fi
   DEV_JWT_PASSPHRASE="${DEFAULT_JWT_PASSPHRASE:-changeme}"
 fi
 
@@ -653,8 +663,6 @@ fi
 cat > .env.example <<ENV
 APP_ENV=dev
 APP_SECRET=CHANGE_ME
-ADMIN_LOGIN=YOUR_ADMIN_LOGIN
-ADMIN_PASSWORD=YOUR_ADMIN_PASSWORD
 ENV
 
 $USE_DB && cat >> .env.example <<ENV
@@ -675,8 +683,6 @@ ENV
 cat > .env <<ENV
 APP_ENV=dev
 APP_SECRET=${APP_SECRET}
-ADMIN_LOGIN=${DEV_ADMIN_LOGIN}
-ADMIN_PASSWORD=${DEV_ADMIN_PASSWORD}
 ENV
 
 if $USE_DB; then
@@ -707,7 +713,7 @@ ENV
 step "Generando Makefile"
 
 cat > Makefile <<MAKE
-.PHONY: up down build serve start stop sh cc logs logs-symfony ps migrate migration jwt-keys prod-build prod-up admin
+.PHONY: up down build serve start stop sh cc logs logs-symfony ps migrate migration jwt-keys prod-build prod-up
 
 ENV_DIR = aDespliegue/dev
 RUN_PHP = docker compose -f \$(ENV_DIR)/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE}
@@ -806,30 +812,6 @@ prod-build:
 prod-up:
 	docker compose -f aDespliegue/prod/docker-compose.yml up -d
 
-MAKE
-fi
-
-if $USE_AUTH && $USE_DB; then
-  cat >> Makefile <<MAKE
-admin:
-	\$(RUN_PHP) php -r "\
-	  require '\''/workspace/vendor/autoload.php'\'';\
-	  (new Symfony\\Component\\Dotenv\\Dotenv())->bootEnv('\''/workspace/.env'\'');\
-	  \$kernel = new App\\Kernel('\''dev'\'', true);\
-	  \$kernel->boot();\
-	  \$adminLogin = \$_ENV['\''ADMIN_LOGIN'\''] ?: getenv('\''ADMIN_LOGIN'\'') ?: '\''admin'\'';\
-	  \$adminPassword = \$_ENV['\''ADMIN_PASSWORD'\''] ?: getenv('\''ADMIN_PASSWORD'\'') ?: '\''change_me_admin_password'\'';\
-	  \$c = \$kernel->getContainer();\
-	  \$em = \$c->get('\''doctrine'\'')->getManager();\
-	  if (\$em->getRepository(App\\Entity\\User::class)->findOneBy(['\''login'\''=>\$adminLogin])) { echo '\''Ya existe.\n'\''; exit(0); }\
-	  \$u = new App\\Entity\\User();\
-	  \$u->setLogin(\$adminLogin);\
-	  \$u->setPassword(password_hash(\$adminPassword, PASSWORD_BCRYPT));\
-	  \$u->setRoles(['\''ROLE_ADMIN'\'']);\
-	  \$u->setActivo(true);\
-	  \$em->persist(\$u); \$em->flush();\
-	  echo \$adminLogin . '\'' creado.\n'\'';\
-	"
 MAKE
 fi
 
@@ -1061,15 +1043,18 @@ if $USE_AUTH && $USE_DB; then
   " 2>/dev/null | tr -d '[:space:]')
 
   SKIP_ADMIN_CREATION=false
+  RAN_INITIAL_MIGRATION=false
   set +e
   if [[ "$DB_HAS_TABLES" == "true" ]]; then
-    echo "  ℹ️  La base de datos '${DEV_DB_NAME}' ya contiene tablas. Se omite la migración por seguridad."
+    echo "  ℹ️  La base de datos '${DEV_DB_NAME}' ya contiene tablas. Se omiten la migración y el usuario admin inicial por seguridad."
+    SKIP_ADMIN_CREATION=true
     if [[ "$DB_HAS_USER_TABLE" != "true" ]]; then
       echo "  ⚠️  Advertencia: La tabla 'user' no existe. Se omitirá la creación del administrador inicial."
       SKIP_ADMIN_CREATION=true
     fi
   else
     echo "  La base de datos está vacía. Ejecutando migraciones..."
+    RAN_INITIAL_MIGRATION=true
     sym_exec "php bin/console make:migration --no-interaction"
     if ! sym_exec "php bin/console doctrine:migrations:migrate --no-interaction"; then
       echo "  ⚠ Migraciones fallidas o no registradas. Sincronizando esquema de base de datos directamente..."
@@ -1080,14 +1065,23 @@ if $USE_AUTH && $USE_DB; then
 
   if [[ "$SKIP_ADMIN_CREATION" == "true" ]]; then
     echo "  ℹ️  Creación del usuario administrador omitida."
+  elif ! $ADMIN_CREDENTIALS_CONFIGURED; then
+    echo "  ℹ️  ADMIN_LOGIN/ADMIN_PASSWORD no están definidos en el .conf. Se omite el usuario admin inicial."
   else
-    if ! docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} php -r "
+    if ! docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace \
+      -e INIT_ADMIN_LOGIN="${DEV_ADMIN_LOGIN}" \
+      -e INIT_ADMIN_PASSWORD="${DEV_ADMIN_PASSWORD}" \
+      ${DEV_PHP_SERVICE} php -r "
       require '/workspace/vendor/autoload.php';
       (new Symfony\Component\Dotenv\Dotenv())->bootEnv('/workspace/.env');
       \$kernel = new App\Kernel('dev', true);
       \$kernel->boot();
-      \$adminLogin = \$_ENV['ADMIN_LOGIN'] ?: getenv('ADMIN_LOGIN') ?: 'admin';
-      \$adminPassword = \$_ENV['ADMIN_PASSWORD'] ?: getenv('ADMIN_PASSWORD') ?: 'change_me_admin_password';
+      \$adminLogin = getenv('INIT_ADMIN_LOGIN') ?: '';
+      \$adminPassword = getenv('INIT_ADMIN_PASSWORD') ?: '';
+      if (\$adminLogin === '' || \$adminPassword === '') {
+        echo 'Credenciales admin iniciales no definidas.' . PHP_EOL;
+        exit(1);
+      }
       \$container = \$kernel->getContainer();
       \$em = \$container->get('doctrine')->getManager();
       \$repo = \$em->getRepository(App\Entity\User::class);
@@ -1107,7 +1101,8 @@ if $USE_AUTH && $USE_DB; then
       echo "   Verifica permisos de base de datos para ${DEV_DB_USER} sobre ${DEV_DB_NAME}."
       exit 1
     fi
-    echo "  ✓ Usuario admin creado con ADMIN_LOGIN / ADMIN_PASSWORD"
+    echo "  ✓ Usuario admin creado con credenciales del .conf"
+    ADMIN_USER_CREATED=true
   fi
 fi
 
@@ -1137,9 +1132,42 @@ PHP
 JSON
 fi
 
+step "Generando leeme.txt"
+{
+  echo "desarrollo:"
+  echo "-----------"
+  if $USE_SYMFONY; then
+    echo "cd app"
+    echo "symfony server:start --port=${HTTP_PORT} --no-tls --allow-http --allow-all-ip"
+  else
+    echo "cd app/public"
+    echo "php -S 0.0.0.0:${HTTP_PORT}"
+  fi
+  echo "http://localhost:${HTTP_PORT}"
+  echo ""
+  echo "produccion:"
+  echo "-----------"
+  if [[ -n "${PROD_URLS}" ]]; then
+    IFS=',' read -ra PROD_URL_LIST <<< "${PROD_URLS}"
+    for url in "${PROD_URL_LIST[@]}"; do
+      url=$(echo "$url" | xargs)
+      [[ -n "$url" ]] && echo "$url"
+    done
+  else
+    echo "http://localhost:${PROD_HTTP_PORT}"
+  fi
+  if [[ "${ADMIN_USER_CREATED}" == "true" ]]; then
+    echo ""
+    echo "admin:"
+    echo "------"
+    echo "Usuario: ${DEV_ADMIN_LOGIN}"
+    echo "Password: ${DEV_ADMIN_PASSWORD}"
+  fi
+} > leeme.txt
+
 if $USE_DB && [[ -f app/.env.local ]]; then
-  # Symfony solo necesita DATABASE_URL; las variables DB_* son internas del inicializador.
-  perl -0pi -e 's/^DB_(?:NAME|USER|PASSWORD|HOST|PORT)=.*\n//mg; s/^# Nota: DATABASE_URL.*\n//mg' app/.env.local
+  # Symfony solo necesita DATABASE_URL; DB_* y ADMIN_* son internas del inicializador.
+  perl -0pi -e 's/^(?:DB_(?:NAME|USER|PASSWORD|HOST|PORT)|ADMIN_(?:LOGIN|PASSWORD))=.*\n//mg; s/^# Nota: DATABASE_URL.*\n//mg' app/.env.local
 fi
 
 # Asegurar que todos los archivos nuevos creados sean del usuario host
@@ -1167,10 +1195,13 @@ else
   echo "  ├── app/               (PHP ${PHP_VERSION})"
 fi
 echo "  ├── Makefile"
+echo "  ├── leeme.txt"
 echo "  └── .env"
 echo ""
 echo "  🌐  App:     http://localhost:${HTTP_PORT}"
-$USE_AUTH && echo "  🔑  Admin:   ${DEV_ADMIN_LOGIN} / ADMIN_PASSWORD  ← contraseña definida en .env"
+if $USE_AUTH && $ADMIN_CREDENTIALS_CONFIGURED; then
+  echo "  🔑  Admin inicial: ver leeme.txt si se creó una base nueva"
+fi
 
 echo ""
 echo "  Comandos:"
