@@ -102,9 +102,12 @@ if [[ -n "$CONFIG_FILE" ]]; then
 
   # Aplicar defaults para campos opcionales
   PHP_VERSION="${PHP_VERSION:-8.4}"
-  HTTP_PORT="${HTTP_PORT:-8080}"
-  PROD_HTTP_PORT="${PROD_HTTP_PORT:-80}"
+  PORT_DEV="${PORT_DEV:-${HTTP_PORT:-8080}}"
+  PORT_PROD="${PORT_PROD:-${PROD_HTTP_PORT:-80}}"
+  PROD_SERVER_IP="${PROD_SERVER_IP:-${PROD_SERVER_IPS:-}}"
   PROD_URLS="${PROD_URLS:-}"
+  HTTP_PORT="${PORT_DEV}"
+  PROD_HTTP_PORT="${PORT_PROD}"
   DB_NETWORK="${DB_NETWORK:-}"
   SYMFONY_INSTALL="${SYMFONY_INSTALL:-minimal}"
 
@@ -130,9 +133,12 @@ else
   fi
 
   PHP_VERSION=$(ask_input "Versión de PHP" "8.3")
-  HTTP_PORT=$(ask_input "Puerto HTTP local (dev)" "8080")
-  PROD_HTTP_PORT=$(ask_input "Puerto HTTP producción" "80")
+  PORT_DEV=$(ask_input "Puerto HTTP desarrollo" "8080")
+  PORT_PROD=$(ask_input "Puerto HTTP producción" "80")
+  PROD_SERVER_IP=$(ask_input "IP servidor producción" "")
   PROD_URLS=""
+  HTTP_PORT="${PORT_DEV}"
+  PROD_HTTP_PORT="${PORT_PROD}"
   SYMFONY_INSTALL="minimal"
   DB_NETWORK=""
 
@@ -357,7 +363,7 @@ services:
       dockerfile: aDespliegue/dev/Dockerfile
     container_name: ${DEV_PHP_NAME}
     ports:
-      - "${HTTP_PORT}:8000"
+      - "${PORT_DEV}:8000"
     volumes:
       - ../../app:/workspace
     environment:
@@ -480,7 +486,7 @@ cat >> aDespliegue/prod/docker-compose.yml <<YAML
     image: nginx:alpine
     container_name: ${PROD_NGINX_NAME}
     ports:
-      - "${PROD_HTTP_PORT}:80"
+      - "${PORT_PROD}:80"
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf
     depends_on:
@@ -1138,23 +1144,26 @@ step "Generando leeme.txt"
   echo "-----------"
   if $USE_SYMFONY; then
     echo "cd app"
-    echo "symfony server:start --port=${HTTP_PORT} --no-tls --allow-http --allow-all-ip"
+    echo "symfony server:start --port=${PORT_DEV} --no-tls --allow-http --allow-all-ip"
   else
     echo "cd app/public"
-    echo "php -S 0.0.0.0:${HTTP_PORT}"
+    echo "php -S 0.0.0.0:${PORT_DEV}"
   fi
-  echo "http://localhost:${HTTP_PORT}"
+  echo "http://localhost:${PORT_DEV}"
   echo ""
   echo "produccion:"
   echo "-----------"
-  if [[ -n "${PROD_URLS}" ]]; then
+  if [[ -n "${PROD_SERVER_IP}" ]]; then
+    PROD_SERVER_IP=$(echo "${PROD_SERVER_IP}" | xargs)
+    echo "http://${PROD_SERVER_IP}:${PORT_PROD}"
+  elif [[ -n "${PROD_URLS}" ]]; then
     IFS=',' read -ra PROD_URL_LIST <<< "${PROD_URLS}"
     for url in "${PROD_URL_LIST[@]}"; do
       url=$(echo "$url" | xargs)
       [[ -n "$url" ]] && echo "$url"
     done
   else
-    echo "http://localhost:${PROD_HTTP_PORT}"
+    echo "http://localhost:${PORT_PROD}"
   fi
   if [[ "${ADMIN_USER_CREATED}" == "true" ]]; then
     echo ""
@@ -1198,7 +1207,7 @@ echo "  ├── Makefile"
 echo "  ├── leeme.txt"
 echo "  └── .env"
 echo ""
-echo "  🌐  App:     http://localhost:${HTTP_PORT}"
+echo "  🌐  App:     http://localhost:${PORT_DEV}"
 if $USE_AUTH && $ADMIN_CREDENTIALS_CONFIGURED; then
   echo "  🔑  Admin inicial: ver leeme.txt si se creó una base nueva"
 fi
