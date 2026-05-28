@@ -665,27 +665,7 @@ DEFAULTS
   DEV_JWT_PASSPHRASE="${DEFAULT_JWT_PASSPHRASE:-changeme}"
 fi
 
-# ── .env.example (se commitea, sin valores reales) ───────────────────────────
-cat > .env.example <<ENV
-APP_ENV=dev
-APP_SECRET=CHANGE_ME
-ENV
-
-$USE_DB && cat >> .env.example <<ENV
-DB_NAME=${DEV_DB_NAME}
-DB_USER=YOUR_DB_USER
-DB_PASSWORD=YOUR_DB_PASSWORD
-DB_HOST=YOUR_DB_HOST
-DB_PORT=3306
-DATABASE_URL=mysql://YOUR_DB_USER:YOUR_DB_PASSWORD@YOUR_DB_HOST:3306/${DEV_DB_NAME}
-
-$USE_JWT && cat >> .env.example <<ENV
-JWT_SECRET_KEY=%kernel.project_dir%/config/jwt/private.pem
-JWT_PUBLIC_KEY=%kernel.project_dir%/config/jwt/public.pem
-JWT_PASSPHRASE=YOUR_JWT_PASSPHRASE
-ENV
-
-# ── .env real (no se commitea, usa credenciales del ~/.symfony-defaults) ──────
+# ── .env real (no se commitea, usa credenciales locales) ─────────────────────
 cat > .env <<ENV
 APP_ENV=dev
 APP_SECRET=${APP_SECRET}
@@ -697,21 +677,17 @@ if $USE_DB; then
   DATABASE_URL="mysql://${ENCODED_DB_USER}:${ENCODED_DB_PASSWORD}@${DEV_DB_HOST}:${DEV_DB_PORT}/${DEV_DB_NAME}"
   DATABASE_URL=$(escape_symfony_env_percents "${DATABASE_URL}")
   cat >> .env <<ENV
-DB_NAME=${DEV_DB_NAME}
-DB_USER=${DEV_DB_USER}
-DB_PASSWORD=${DEV_DB_PASSWORD}
-DB_HOST=${DEV_DB_HOST}
-DB_PORT=${DEV_DB_PORT}
-# Nota: DATABASE_URL escapa % como %% para Symfony; la clave real es DB_PASSWORD.
 DATABASE_URL=${DATABASE_URL}
 ENV
 fi
 
-$USE_JWT && cat >> .env <<ENV
+if $USE_JWT; then
+  cat >> .env <<ENV
 JWT_SECRET_KEY=%kernel.project_dir%/config/jwt/private.pem
 JWT_PUBLIC_KEY=%kernel.project_dir%/config/jwt/public.pem
 JWT_PASSPHRASE=${DEV_JWT_PASSPHRASE}
 ENV
+fi
 
 # -----------------------------------------------------------------------------
 # 12. Makefile en la raíz
@@ -946,18 +922,21 @@ fi
 
 # app/.env.local anula app/.env de Symfony durante la inicialización
 cp .env app/.env.local
-# .env.example va al repo como plantilla de referencia
-cp .env.example app/.env.example
 if $USE_DB; then
   step "Verificando conexión a la base de datos"
   if ! docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} php -r "
     require '/workspace/vendor/autoload.php';
     (new Symfony\Component\Dotenv\Dotenv())->bootEnv('/workspace/.env');
-    \$host = \$_ENV['DB_HOST'] ?? 'host.docker.internal';
-    \$port = \$_ENV['DB_PORT'] ?? 3306;
-    \$user = \$_ENV['DB_USER'] ?? 'root';
-    \$pass = \$_ENV['DB_PASSWORD'] ?? '';
-    \$dbName = \$_ENV['DB_NAME'] ?? '';
+    \$databaseUrl = \$_ENV['DATABASE_URL'] ?? getenv('DATABASE_URL') ?: '';
+    \$databaseParts = [];
+    if (\$databaseUrl !== '') {
+      \$databaseParts = parse_url(str_replace('%%', '%', \$databaseUrl)) ?: [];
+    }
+    \$host = \$_ENV['DB_HOST'] ?? (\$databaseParts['host'] ?? 'host.docker.internal');
+    \$port = \$_ENV['DB_PORT'] ?? (\$databaseParts['port'] ?? 3306);
+    \$user = \$_ENV['DB_USER'] ?? (isset(\$databaseParts['user']) ? rawurldecode(\$databaseParts['user']) : 'root');
+    \$pass = \$_ENV['DB_PASSWORD'] ?? (isset(\$databaseParts['pass']) ? rawurldecode(\$databaseParts['pass']) : '');
+    \$dbName = \$_ENV['DB_NAME'] ?? (isset(\$databaseParts['path']) ? ltrim(\$databaseParts['path'], '/') : '');
 
     // 1. Verificar conexión al servidor (sin dbname)
     \$maxAttempts = 5;
@@ -1016,11 +995,16 @@ if $USE_AUTH && $USE_DB; then
   DB_HAS_TABLES=$(docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} php -r "
     require '/workspace/vendor/autoload.php';
     (new Symfony\Component\Dotenv\Dotenv())->bootEnv('/workspace/.env');
-    \$host = \$_ENV['DB_HOST'] ?? 'host.docker.internal';
-    \$port = \$_ENV['DB_PORT'] ?? 3306;
-    \$user = \$_ENV['DB_USER'] ?? 'root';
-    \$pass = \$_ENV['DB_PASSWORD'] ?? '';
-    \$dbName = \$_ENV['DB_NAME'] ?? '';
+    \$databaseUrl = \$_ENV['DATABASE_URL'] ?? getenv('DATABASE_URL') ?: '';
+    \$databaseParts = [];
+    if (\$databaseUrl !== '') {
+      \$databaseParts = parse_url(str_replace('%%', '%', \$databaseUrl)) ?: [];
+    }
+    \$host = \$_ENV['DB_HOST'] ?? (\$databaseParts['host'] ?? 'host.docker.internal');
+    \$port = \$_ENV['DB_PORT'] ?? (\$databaseParts['port'] ?? 3306);
+    \$user = \$_ENV['DB_USER'] ?? (isset(\$databaseParts['user']) ? rawurldecode(\$databaseParts['user']) : 'root');
+    \$pass = \$_ENV['DB_PASSWORD'] ?? (isset(\$databaseParts['pass']) ? rawurldecode(\$databaseParts['pass']) : '');
+    \$dbName = \$_ENV['DB_NAME'] ?? (isset(\$databaseParts['path']) ? ltrim(\$databaseParts['path'], '/') : '');
     try {
       \$pdo = new PDO('mysql:host=' . \$host . ';port=' . \$port . ';dbname=' . \$dbName, \$user, \$pass);
       \$count = (int) \$pdo->query('SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()')->fetchColumn();
@@ -1034,11 +1018,16 @@ if $USE_AUTH && $USE_DB; then
   DB_HAS_USER_TABLE=$(docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} php -r "
     require '/workspace/vendor/autoload.php';
     (new Symfony\Component\Dotenv\Dotenv())->bootEnv('/workspace/.env');
-    \$host = \$_ENV['DB_HOST'] ?? 'host.docker.internal';
-    \$port = \$_ENV['DB_PORT'] ?? 3306;
-    \$user = \$_ENV['DB_USER'] ?? 'root';
-    \$pass = \$_ENV['DB_PASSWORD'] ?? '';
-    \$dbName = \$_ENV['DB_NAME'] ?? '';
+    \$databaseUrl = \$_ENV['DATABASE_URL'] ?? getenv('DATABASE_URL') ?: '';
+    \$databaseParts = [];
+    if (\$databaseUrl !== '') {
+      \$databaseParts = parse_url(str_replace('%%', '%', \$databaseUrl)) ?: [];
+    }
+    \$host = \$_ENV['DB_HOST'] ?? (\$databaseParts['host'] ?? 'host.docker.internal');
+    \$port = \$_ENV['DB_PORT'] ?? (\$databaseParts['port'] ?? 3306);
+    \$user = \$_ENV['DB_USER'] ?? (isset(\$databaseParts['user']) ? rawurldecode(\$databaseParts['user']) : 'root');
+    \$pass = \$_ENV['DB_PASSWORD'] ?? (isset(\$databaseParts['pass']) ? rawurldecode(\$databaseParts['pass']) : '');
+    \$dbName = \$_ENV['DB_NAME'] ?? (isset(\$databaseParts['path']) ? ltrim(\$databaseParts['path'], '/') : '');
     try {
       \$pdo = new PDO('mysql:host=' . \$host . ';port=' . \$port . ';dbname=' . \$dbName, \$user, \$pass);
       \$stmt = \$pdo->query(\"SHOW TABLES LIKE 'user'\");
