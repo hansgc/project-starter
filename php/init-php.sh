@@ -564,6 +564,7 @@ cat > .devcontainer/devcontainer.json <<JSON
           "editor.defaultFormatter": "junstyle.php-cs-fixer"
         }
       }
+    }
   },
   "postStartCommand": "cd /workspace/app && composer install && symfony server:start --no-tls --port=8000 --daemon"
 }
@@ -817,13 +818,13 @@ case "${SYMFONY_INSTALL}" in
   *) echo "Error: SYMFONY_INSTALL debe ser minimal o webapp."; exit 1 ;;
 esac
 
-docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} symfony new /workspace ${SYMFONY_FLAGS} --version=lts --no-git 2>/dev/null || docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} composer create-project --no-interaction ${SYMFONY_PACKAGE} /workspace
+docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE} symfony new /workspace/app ${SYMFONY_FLAGS} --version=lts --no-git 2>/dev/null || docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE} composer create-project --no-interaction ${SYMFONY_PACKAGE} /workspace/app
 
 # Ajustar permisos de los archivos creados para el usuario actual
 docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} chown -R $(id -u):$(id -g) /workspace
 
 # Desactivar recetas de Docker de Symfony Flex para evitar prompts interactivos
-docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} composer config extra.symfony.docker false
+docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE} composer config extra.symfony.docker false
 
 # -----------------------------------------------------------------------------
 # 16. Instalar paquetes según módulos
@@ -831,7 +832,7 @@ docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PH
 step "Instalando paquetes seleccionados"
 
 sym_exec() {
-  docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} \
+  docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE} \
     bash -c "$1"
 }
 
@@ -908,9 +909,9 @@ ENV
 fi
 if $USE_DB; then
   step "Verificando conexión a la base de datos"
-  if ! docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} php -r "
-    require '/workspace/vendor/autoload.php';
-    (new Symfony\Component\Dotenv\Dotenv())->bootEnv('/workspace/.env');
+  if ! docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE} php -r "
+    require '/workspace/app/vendor/autoload.php';
+    (new Symfony\Component\Dotenv\Dotenv())->bootEnv('/workspace/app/.env');
     \$databaseUrl = \$_ENV['DATABASE_URL'] ?? getenv('DATABASE_URL') ?: '';
     \$databaseParts = [];
     if (\$databaseUrl !== '') {
@@ -976,9 +977,9 @@ if $USE_AUTH && $USE_DB; then
   step "Creando usuario admin por defecto"
 
   # Verificar si la base de datos ya tiene tablas (no está vacía)
-  DB_HAS_TABLES=$(docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} php -r "
-    require '/workspace/vendor/autoload.php';
-    (new Symfony\Component\Dotenv\Dotenv())->bootEnv('/workspace/.env');
+  DB_HAS_TABLES=$(docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE} php -r "
+    require '/workspace/app/vendor/autoload.php';
+    (new Symfony\Component\Dotenv\Dotenv())->bootEnv('/workspace/app/.env');
     \$databaseUrl = \$_ENV['DATABASE_URL'] ?? getenv('DATABASE_URL') ?: '';
     \$databaseParts = [];
     if (\$databaseUrl !== '') {
@@ -999,9 +1000,9 @@ if $USE_AUTH && $USE_DB; then
   " 2>/dev/null | tr -d '[:space:]')
 
   # Verificar si la base de datos ya tiene la tabla de usuarios
-  DB_HAS_USER_TABLE=$(docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace ${DEV_PHP_SERVICE} php -r "
-    require '/workspace/vendor/autoload.php';
-    (new Symfony\Component\Dotenv\Dotenv())->bootEnv('/workspace/.env');
+  DB_HAS_USER_TABLE=$(docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE} php -r "
+    require '/workspace/app/vendor/autoload.php';
+    (new Symfony\Component\Dotenv\Dotenv())->bootEnv('/workspace/app/.env');
     \$databaseUrl = \$_ENV['DATABASE_URL'] ?? getenv('DATABASE_URL') ?: '';
     \$databaseParts = [];
     if (\$databaseUrl !== '') {
@@ -1047,12 +1048,12 @@ if $USE_AUTH && $USE_DB; then
   elif ! $ADMIN_CREDENTIALS_CONFIGURED; then
     echo "  ℹ️  ADMIN_LOGIN/ADMIN_PASSWORD no están definidos en el .conf. Se omite el usuario admin inicial."
   else
-    if ! docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace \
+    if ! docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace/app \
       -e INIT_ADMIN_LOGIN="${DEV_ADMIN_LOGIN}" \
       -e INIT_ADMIN_PASSWORD="${DEV_ADMIN_PASSWORD}" \
       ${DEV_PHP_SERVICE} php -r "
-      require '/workspace/vendor/autoload.php';
-      (new Symfony\Component\Dotenv\Dotenv())->bootEnv('/workspace/.env');
+      require '/workspace/app/vendor/autoload.php';
+      (new Symfony\Component\Dotenv\Dotenv())->bootEnv('/workspace/app/.env');
       \$kernel = new App\Kernel('dev', true);
       \$kernel->boot();
       \$adminLogin = getenv('INIT_ADMIN_LOGIN') ?: '';
