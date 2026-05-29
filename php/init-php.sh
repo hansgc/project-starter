@@ -177,14 +177,14 @@ if $USE_ADMIN && ! $USE_DB; then
 fi
 
 PROJECT_SLUG=$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')
-DEV_PHP_SERVICE="php_${PROJECT_SLUG}"
-DEV_PHP_NAME="dev-php_${PROJECT_SLUG}"
-PROD_PHP_SERVICE="php_${PROJECT_SLUG}"
-PROD_PHP_NAME="prod-php_${PROJECT_SLUG}"
-PROD_NGINX_SERVICE="nginx_${PROJECT_SLUG}"
-PROD_NGINX_NAME="prod-nginx_${PROJECT_SLUG}"
-DEV_NETWORK_NAME="dev-php_${PROJECT_SLUG}_net"
-PROD_NETWORK_NAME="prod-php_${PROJECT_SLUG}_net"
+DEV_PHP_SERVICE="${PROJECT_SLUG}-php-dev"
+DEV_PHP_NAME="${PROJECT_SLUG}-php-dev"
+PROD_PHP_SERVICE="${PROJECT_SLUG}-php-prod"
+PROD_PHP_NAME="${PROJECT_SLUG}-php-prod"
+PROD_NGINX_SERVICE="${PROJECT_SLUG}-nginx-prod"
+PROD_NGINX_NAME="${PROJECT_SLUG}-nginx-prod"
+DEV_NETWORK_NAME="${PROJECT_SLUG}-php-dev_net"
+PROD_NETWORK_NAME="${PROJECT_SLUG}-php-prod_net"
 CONFIRM=s
 # -----------------------------------------------------------------------------
 # 2. Resumen (siempre se muestra, con confirmación solo en modo interactivo)
