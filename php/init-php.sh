@@ -566,7 +566,8 @@ cat > .devcontainer/devcontainer.json <<JSON
       }
     }
   },
-  "postStartCommand": "cd /workspace/app && composer install && symfony server:start --no-tls --port=8000 --daemon"
+  "postCreateCommand": "cd /workspace/app && composer install",
+  "postStartCommand": "cd /workspace/app && symfony server:start --no-tls --port=8000 --daemon"
 }
 JSON
 
