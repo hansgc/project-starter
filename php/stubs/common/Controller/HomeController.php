@@ -11,6 +11,6 @@ class HomeController extends AbstractController
     #[Route('/', name: 'app_home')]
     public function index(): Response
     {
-        return new Response('Symfony app ready.');
+        return $this->redirectToRoute('admin');
     }
 }
