@@ -1,0 +1,7 @@
+app/rclone.conf
+.env.local
+.DS_Store
+.idea/
+.vscode/
+*.log
+backups/

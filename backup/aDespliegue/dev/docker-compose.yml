@@ -1,0 +1,39 @@
+services:
+  backup:
+    build:
+      context: ../..
+      dockerfile: aDespliegue/dev/Dockerfile
+    container_name: backup-dev
+    image: backup-dev
+    env_file: ../../app/.env
+    volumes:
+      - backup_data:/backups
+      - ../../app/rclone.conf:/root/.config/rclone/rclone.conf:ro
+    networks:
+      - backup_net
+    restart: unless-stopped
+    depends_on:
+      - mysql
+
+  mysql:
+    image: mysql:8.0
+    container_name: backup-mysql-dev
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: ${DB_NAME:-mibasededatos}
+      MYSQL_USER: ${DB_USER:-usuario}
+      MYSQL_PASSWORD: ${DB_PASS:-password123}
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - backup_net
+
+volumes:
+  backup_data:
+  mysql_data:
+
+networks:
+  backup_net:
+    name: backup_net
