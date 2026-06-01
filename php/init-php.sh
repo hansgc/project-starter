@@ -61,6 +61,47 @@ step() {
   echo "$1"
 }
 
+# ── Verificar si un contenedor Docker está levantado ────────────
+verificar_contenedor_docker() {
+  local container_name=$1
+  if docker ps --format "table {{.Names}}" 2>/dev/null | grep -q "^${container_name}$"; then
+    return 0  # Contenedor está levantado
+  else
+    return 1  # Contenedor NO está levantado
+  fi
+}
+
+# ── Verificar contenedores requeridos ──────────────────────────
+verificar_contenedores_requeridos() {
+  local db_container=$1
+  local backup_container=$2
+
+  # Verificar base de datos
+  if ! verificar_contenedor_docker "$db_container"; then
+    echo ""
+    echo "❌ Error crítico: El contenedor de base de datos '$db_container' no está levantado."
+    echo "   Por favor, levanta el contenedor de MySQL y luego vuelve a ejecutar este script."
+    echo "   Comando: docker-compose up -d (en tu proyecto de MySQL)"
+    echo ""
+    exit 1
+  fi
+  echo "  ✓ Contenedor de MySQL '$db_container' está levantado."
+
+  # Verificar backup si se definió BACKUP_CONTAINER_NAME
+  if [[ -n "$backup_container" ]]; then
+    if ! verificar_contenedor_docker "$backup_container"; then
+      echo ""
+      echo "❌ Error crítico: El contenedor de backup '$backup_container' no está levantado."
+      echo "   Se configuró BACKUP_CONTAINER_NAME='$backup_container', pero el contenedor no está disponible."
+      echo "   Por favor, levanta el contenedor de backup y luego vuelve a ejecutar este script."
+      echo "   Comando: docker-compose up -d <servicio-de-backup> (en tu proyecto de backup)"
+      echo ""
+      exit 1
+    fi
+    echo "  ✓ Contenedor de backup '$backup_container' está levantado."
+  fi
+}
+
 # -----------------------------------------------------------------------------
 # 1. Fuente de configuración: archivo o modo interactivo
 # -----------------------------------------------------------------------------
@@ -106,14 +147,23 @@ if [[ -n "$CONFIG_FILE" ]]; then
   PORT_PROD="${PORT_PROD:-${PROD_HTTP_PORT:-80}}"
   PROD_SERVER_IP="${PROD_SERVER_IP:-${PROD_SERVER_IPS:-}}"
   PROD_URLS="${PROD_URLS:-}"
+
+  echo ""
+  while IFS='=' read -r key value; do
+    [[ "$key" =~ ^#.*$ || -z "$key" ]] && continue
+    key=$(echo "$key" | tr -d ' ')
+    value=$(echo "$value" | tr -d '"' | tr -d "'" | sed 's/[[:space:]]*#.*//' | xargs)
+    printf "  %s=%s\n" "$key" "$value"
+  done < "$CONFIG_FILE"
+  echo ""
   HTTP_PORT="${PORT_DEV}"
   PROD_HTTP_PORT="${PORT_PROD}"
   DB_NETWORK="${DB_NETWORK:-}"
   SYMFONY_INSTALL="${SYMFONY_INSTALL:-minimal}"
 
-  # Normalizar booleanos
+  BACKUP_CONTAINER_NAME="${BACKUP_CONTAINER_NAME:-}"
+
   bool_default_true "${USE_SYMFONY:-true}" && USE_SYMFONY=true || USE_SYMFONY=false
-  bool "${USE_DB:-false}"           && USE_DB=true           || USE_DB=false
   bool "${USE_AUTH:-false}"         && USE_AUTH=true         || USE_AUTH=false
   bool "${USE_JWT:-false}"          && USE_JWT=true          || USE_JWT=false
   bool "${USE_ADMIN:-false}"        && USE_ADMIN=true        || USE_ADMIN=false
@@ -143,15 +193,16 @@ else
   DB_NETWORK=""
 
   echo ""
+  DB_HOST=$(ask_input "Host de base de datos (vacío para omitir DB)" "host.docker.internal")
+
+  echo ""
   echo "Módulos a incluir:"
 
   USE_SYMFONY=false;      ask_yn "Framework Symfony" "s"                        && USE_SYMFONY=true
-  USE_DB=false
   USE_AUTH=false
   USE_JWT=false
   USE_ADMIN=false
   if $USE_SYMFONY; then
-    ask_yn "Base de datos (Doctrine + MySQL)" "s"                               && USE_DB=true
     ask_yn "Autenticación (Symfony Security)" "n"                                && USE_AUTH=true
     if $USE_AUTH; then
       ask_yn "  ↳ JWT (LexikJWTAuthenticationBundle)" "n" && USE_JWT=true
@@ -163,20 +214,35 @@ fi
 
 # Los módulos actuales de framework son específicos de Symfony.
 if ! $USE_SYMFONY; then
-  USE_DB=false
   USE_AUTH=false
   USE_JWT=false
   USE_ADMIN=false
 fi
 
 # EasyAdmin necesita Doctrine (aplica en ambos modos)
-if $USE_ADMIN && ! $USE_DB; then
+if $USE_ADMIN && [[ -z "${DB_HOST:-}" ]]; then
   echo ""
-  echo "⚠ EasyAdmin requiere Doctrine. Se habilitará automáticamente."
-  USE_DB=true
+  echo "⚠ EasyAdmin requiere base de datos. Se activará DB_HOST por defecto."
+  DB_HOST="host.docker.internal"
+fi
+
+# Backup necesita Doctrine (aplica en ambos modos)
+if [[ -n "$BACKUP_CONTAINER_NAME" ]] && [[ -z "${DB_HOST:-}" ]]; then
+  echo ""
+  echo "⚠ Backup requiere base de datos. Se activará DB_HOST por defecto."
+  DB_HOST="host.docker.internal"
 fi
 
 PROJECT_SLUG=$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')
+
+# -----------------------------------------------------------------------------
+# Verificar contenedores Docker requeridos antes de continuar
+# -----------------------------------------------------------------------------
+if [[ -n "${DB_HOST:-}" ]]; then
+  step "Verificando contenedores Docker requeridos"
+  DB_CONTAINER="${DB_HOST:-mysql}"
+  verificar_contenedores_requeridos "$DB_CONTAINER" "$BACKUP_CONTAINER_NAME"
+fi
 DEV_PHP_SERVICE="${PROJECT_SLUG}-php-dev"
 DEV_PHP_NAME="${PROJECT_SLUG}-php-dev"
 PROD_PHP_SERVICE="${PROJECT_SLUG}-php-prod"
@@ -193,7 +259,7 @@ CONFIRM=s
 # -----------------------------------------------------------------------------
 # 3. Validar base de datos antes de crear directorios
 # -----------------------------------------------------------------------------
-if $USE_DB; then
+if [[ -n "${DB_HOST:-}" ]]; then
   # Cargar defaults si existen
   if [[ -f "$HOME/.symfony-defaults" ]]; then
     while IFS="=" read -r key value; do
@@ -295,7 +361,7 @@ else
   DEV_EXTENSIONS=""
   DEV_APT="wget curl procps"
 fi
-$USE_DB        && DEV_APT+=" default-libmysqlclient-dev"         && DEV_EXTENSIONS+=" pdo pdo_mysql"
+[[ -n "${DB_HOST:-}" ]] && DEV_APT+=" default-libmysqlclient-dev"         && DEV_EXTENSIONS+=" pdo pdo_mysql"
 
 DEV_INSTALL_EXTENSIONS="&& true"
 if [[ -n "$DEV_EXTENSIONS" ]]; then
@@ -349,7 +415,7 @@ step "Generando docker-compose.yml dev"
 
 DEV_DB_NETWORK=""
 DEV_EXTERNAL_NETWORK=""
-if $USE_DB && [[ -n "$DB_NETWORK" && "$DB_NETWORK" != "${DEV_NETWORK_NAME}" ]]; then
+if [[ -n "${DB_HOST:-}" ]] && [[ -n "$DB_NETWORK" && "$DB_NETWORK" != "${DEV_NETWORK_NAME}" ]]; then
   DEV_DB_NETWORK="      - ${DB_NETWORK}"
   DEV_EXTERNAL_NETWORK=$(printf '  %s:\n    external: true' "$DB_NETWORK")
 fi
@@ -374,7 +440,7 @@ services:
 ${DEV_DB_NETWORK}
 YAML
 
-$USE_DB && cat >> aDespliegue/dev/docker-compose.yml <<YAML
+[[ -n "${DB_HOST:-}" ]] && cat >> aDespliegue/dev/docker-compose.yml <<YAML
     extra_hosts:
       - "host.docker.internal:host-gateway"
 YAML
@@ -395,7 +461,7 @@ step "Generando Dockerfile prod"
 if $USE_SYMFONY; then
   PROD_EXTENSIONS="intl opcache zip"
   PROD_APT="git curl unzip libicu-dev libonig-dev libxml2-dev libzip-dev"
-  $USE_DB && PROD_APT+=" default-libmysqlclient-dev" && PROD_EXTENSIONS+=" pdo pdo_mysql"
+  [[ -n "${DB_HOST:-}" ]] && PROD_APT+=" default-libmysqlclient-dev" && PROD_EXTENSIONS+=" pdo pdo_mysql"
 
   cat > aDespliegue/prod/Dockerfile <<DOCKERFILE
 FROM php:${PHP_VERSION}-fpm AS builder
@@ -454,7 +520,7 @@ fi
 # -----------------------------------------------------------------------------
 PROD_DB_NETWORK=""
 PROD_EXTERNAL_NETWORK=""
-if $USE_DB && [[ -n "$DB_NETWORK" && "$DB_NETWORK" != "${PROD_NETWORK_NAME}" ]]; then
+if [[ -n "${DB_HOST:-}" ]] && [[ -n "$DB_NETWORK" && "$DB_NETWORK" != "${PROD_NETWORK_NAME}" ]]; then
   PROD_DB_NETWORK="      - ${DB_NETWORK}"
   PROD_EXTERNAL_NETWORK=$(printf '  %s:\n    external: true' "$DB_NETWORK")
 fi
@@ -475,7 +541,7 @@ services:
 ${PROD_DB_NETWORK}
 YAML
 
-$USE_DB && cat >> aDespliegue/prod/docker-compose.yml <<YAML
+[[ -n "${DB_HOST:-}" ]] && cat >> aDespliegue/prod/docker-compose.yml <<YAML
     extra_hosts:
       - "host.docker.internal:host-gateway"
 YAML
@@ -664,7 +730,7 @@ fi
 
 # ── Variables que se inyectarán en app/.env después de crear Symfony ─────────
 DATABASE_URL=""
-if $USE_DB; then
+if [[ -n "${DB_HOST:-}" ]]; then
   ENCODED_DB_USER=$(urlencode "${DEV_DB_USER}")
   ENCODED_DB_PASSWORD=$(urlencode "${DEV_DB_PASSWORD}")
   DATABASE_URL="mysql://${ENCODED_DB_USER}:${ENCODED_DB_PASSWORD}@${DEV_DB_HOST}:${DEV_DB_PORT}/${DEV_DB_NAME}"
@@ -717,7 +783,7 @@ ps:
 
 MAKE
 
-$USE_DB && cat >> Makefile <<MAKE
+[[ -n "${DB_HOST:-}" ]] && cat >> Makefile <<MAKE
 migrate:
 	\$(RUN_PHP) php bin/console doctrine:migrations:migrate --no-interaction
 
@@ -837,7 +903,7 @@ sym_exec() {
     bash -c "$1"
 }
 
-$USE_DB           && sym_exec "composer require --no-interaction symfony/orm-pack doctrine/doctrine-migrations-bundle"
+[[ -n "${DB_HOST:-}" ]]           && sym_exec "composer require --no-interaction symfony/orm-pack doctrine/doctrine-migrations-bundle"
 ($USE_AUTH || $USE_ADMIN) && sym_exec "composer require --no-interaction symfony/twig-bundle"
 $USE_AUTH         && sym_exec "composer require --no-interaction symfony/security-bundle symfony/validator"
 $USE_JWT          && sym_exec "composer require --no-interaction lexik/jwt-authentication-bundle"
@@ -896,11 +962,18 @@ if [[ -d "$STUBS_DIR" ]]; then
     fi
   fi
 
+  if [[ -n "$BACKUP_CONTAINER_NAME" ]] && [[ -d "$STUBS_DIR/backup" ]]; then
+    [[ -d "$STUBS_DIR/backup/Entity" ]] && cp -r "$STUBS_DIR/backup/Entity" app/src/
+    [[ -d "$STUBS_DIR/backup/EventListener" ]] && cp -r "$STUBS_DIR/backup/EventListener" app/src/
+    [[ -d "$STUBS_DIR/backup/migrations" ]] && cp -r "$STUBS_DIR/backup/migrations/"*.php app/migrations/ 2>/dev/null || true
+    echo "  ✓ stubs/backup → app/src/ (Entity + EventListener + migrations)"
+  fi
+
 else
   echo "  (No se encontró el directorio stubs/, se omite este paso)"
 fi
 
-if $USE_DB; then
+if [[ -n "${DB_HOST:-}" ]]; then
   # Symfony/Doctrine puede dejar una DATABASE_URL de ejemplo activa; deshabilitarla antes de escribir la real.
   sed -i -E 's/^DATABASE_URL=/# DATABASE_URL=/' app/.env
   cat >> app/.env <<ENV
@@ -908,7 +981,7 @@ if $USE_DB; then
 DATABASE_URL=${DATABASE_URL}
 ENV
 fi
-if $USE_DB; then
+if [[ -n "${DB_HOST:-}" ]]; then
   step "Verificando conexión a la base de datos"
   if ! docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE} php -r "
     require '/workspace/app/vendor/autoload.php';
@@ -974,7 +1047,7 @@ if $USE_DB; then
   fi
 fi
 
-if $USE_AUTH && $USE_DB; then
+if $USE_AUTH && [[ -n "${DB_HOST:-}" ]]; then
   step "Creando usuario admin por defecto"
 
   # Verificar si la base de datos ya tiene tablas (no está vacía)
@@ -1188,7 +1261,7 @@ if $USE_SYMFONY; then
   echo "    make serve     → solo arranca el servidor Symfony"
   echo "    make sh        → bash en el contenedor PHP"
   echo "    make cc        → cache:clear"
-  $USE_DB      && echo "    make migrate   → doctrine:migrations:migrate"
+  [[ -n "${DB_HOST:-}" ]] && echo "    make migrate   → doctrine:migrations:migrate"
   $USE_JWT     && echo "    make jwt-keys  → regenerar claves JWT"
   echo "    make logs-symfony → ver log del servidor Symfony"
 else

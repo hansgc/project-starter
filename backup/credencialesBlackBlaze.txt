@@ -1,0 +1,16 @@
+hansgc@gmail.com:ema*Goo2026otro
+
+
+
+---- blackblaze -------
+keyId:
+0056e54deef16b10000000001
+
+keyName:
+cliente-mrv
+
+aplicationKey:
+K005lMvGBDmVg7acqT4S5krInNekF2o
+
+bucket:
+cliente.mrv

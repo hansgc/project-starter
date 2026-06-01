@@ -1,0 +1,256 @@
+================================================================
+DOCUMENTO 3: CREAR CUENTA BACKBLAZE B2 POR CLIENTE
+Y OBTENER LAS CLAVES DE ACCESO
+================================================================
+
+Este proceso se realiza UNA SOLA VEZ por cada cliente nuevo.
+Se hace en tu PC como tecnico, no en la PC del cliente.
+No requiere configuracion OAuth ni autenticacion con navegador.
+Solo se necesitan 2 claves que se copian directamente al .env.
+
+Se divide en 3 partes:
+  PARTE 1: Crear cuenta en Backblaze (solo la primera vez)
+  PARTE 2: Crear un bucket por cliente
+  PARTE 3: Crear las claves de acceso y configurar el proyecto
+
+================================================================
+PARTE 1: CREAR CUENTA EN BACKBLAZE
+(SOLO SE HACE UNA VEZ, SIRVE PARA TODOS LOS CLIENTES)
+================================================================
+
+A diferencia de Google Drive, solo necesitas UNA cuenta
+de Backblaze. Dentro de ella creas un bucket separado
+por cada cliente.
+
+----------------------------------------------------------------
+Paso 1.1: Registrarse en Backblaze
+----------------------------------------------------------------
+
+  Abrir el navegador y entrar a:
+  https://www.backblaze.com/b2/sign-up.html
+
+  Completar:
+    Email:      tu_email_de_tecnico@gmail.com
+    Contrasena: una contrasena segura
+
+  Verificar el email (llega un correo de confirmacion).
+
+----------------------------------------------------------------
+Paso 1.2: Guardar las credenciales
+----------------------------------------------------------------
+
+  Guardar en tu gestor de contrasenas (Bitwarden, KeePass):
+    - Sitio:      backblaze.com
+    - Email:      tu_email_de_tecnico@gmail.com
+    - Contrasena: la que creaste
+
+----------------------------------------------------------------
+Paso 1.3: Espacio disponible gratuitamente
+----------------------------------------------------------------
+
+  Plan gratuito de Backblaze B2:
+    - 10 GB de almacenamiento
+    - Descarga gratuita hasta 1 GB/dia
+    - Suficiente para 5 clientes con bases de datos pequeñas
+
+  Estimacion de uso:
+    - 1 backup comprimido de BD pequeña ~ 10-50 MB
+    - 30 backups por cliente por mes ~ 300 MB - 1.5 GB
+    - 5 clientes ~ 1.5 GB - 7.5 GB en total
+
+  Si en el futuro necesitas mas espacio:
+    - Costo: $0.006 USD por GB/mes
+    - 100 GB adicionales = $0.60 USD/mes
+
+
+================================================================
+PARTE 2: CREAR UN BUCKET POR CLIENTE
+(SE REPITE POR CADA CLIENTE NUEVO)
+================================================================
+
+Un bucket es una carpeta principal en Backblaze donde
+se guardan los archivos. Cada cliente tiene el suyo propio
+para mantener los datos separados.
+
+----------------------------------------------------------------
+Paso 2.1: Ingresar a Backblaze
+----------------------------------------------------------------
+
+  Abrir: https://secure.backblaze.com/b2_buckets.htm
+  Iniciar sesion con tu cuenta de tecnico.
+
+----------------------------------------------------------------
+Paso 2.2: Crear el bucket del cliente
+----------------------------------------------------------------
+
+  1. Clic en el boton "Create a Bucket"
+
+  2. Completar el formulario:
+
+       Bucket Name: backup-clientejuan
+                    (usar solo letras, numeros y guiones)
+                    (debe ser unico globalmente en Backblaze)
+
+       CONVENCION DE NOMBRE RECOMENDADA:
+         backup-[nombrecliente]
+
+       Ejemplos:
+         backup-clientejuan
+         backup-clientemaria
+         backup-ferreteriapedro
+
+       Files in Bucket: Private
+                        (los archivos NO son publicos)
+
+       Default Encryption: Disable
+                           (no es necesario, el .sql.gz
+                            ya viaja comprimido)
+
+       Object Lock: Disable
+
+  3. Clic en "Create a Bucket"
+
+  4. El bucket aparece en la lista. Guardar el nombre exacto
+     porque se usa en el .env del proyecto backup.
+
+----------------------------------------------------------------
+Paso 2.3: Verificar el bucket creado
+----------------------------------------------------------------
+
+  En la lista de buckets debe aparecer:
+    backup-clientejuan    Private    0 GB
+
+
+================================================================
+PARTE 3: CREAR LAS CLAVES DE ACCESO
+(SE REPITE POR CADA CLIENTE NUEVO)
+================================================================
+
+Las claves limitan el acceso solo al bucket del cliente.
+Si una clave se compromete, solo afecta a ese cliente.
+
+----------------------------------------------------------------
+Paso 3.1: Ir a la seccion de claves
+----------------------------------------------------------------
+
+  En el menu izquierdo clic en "App Keys"
+  O entrar directamente a:
+  https://secure.backblaze.com/app_keys.htm
+
+----------------------------------------------------------------
+Paso 3.2: Crear la clave del cliente
+----------------------------------------------------------------
+
+  1. Clic en "Add a New Application Key"
+
+  2. Completar el formulario:
+
+       Name of Key: backup-clientejuan
+                    (nombre descriptivo para identificarla)
+
+       Allow access to Bucket: backup-clientejuan
+                               (seleccionar SOLO el bucket
+                                de ese cliente, no "All")
+
+       Type of Access: Read and Write
+
+       Allow List All Bucket Names: NO marcar
+
+       File name prefix: (dejar vacio)
+
+       Duration: (dejar vacio = sin vencimiento)
+
+  3. Clic en "Create New Key"
+
+  4. APARECE UNA SOLA VEZ la informacion de la clave:
+
+  --------------------------------------------------------
+  keyID:          0012345678901234567890123
+  applicationKey: K001xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  --------------------------------------------------------
+
+  COPIAR AMBOS VALORES INMEDIATAMENTE.
+  Una vez que cierres esta pantalla NO se pueden recuperar.
+  Si los perdes, debes crear una nueva clave.
+
+================================================================
+PARTE 4: CONFIGURAR EL PROYECTO BACKUP DEL CLIENTE
+================================================================
+
+----------------------------------------------------------------
+Paso 4.1: Completar el archivo .env del proyecto backup
+----------------------------------------------------------------
+
+  Abrir el archivo backup/.env del cliente y completar
+  con los valores obtenidos:
+
+  --------------------------------------------------------
+  # Conexion a MySQL
+  DB_HOST=mysql
+  DB_PORT=3306
+  DB_NAME=mibasededatos
+  DB_USER=usuario
+  DB_PASS=password123
+
+  # Identificacion del cliente
+  CLIENTE_ID=cliente_juan
+
+  # Backblaze B2
+  B2_KEY_ID=0012345678901234567890123
+  B2_APP_KEY=K001xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  B2_BUCKET=backup-clientejuan
+  --------------------------------------------------------
+
+================================================================
+PARTE 5: COMO DESCARGAR UN BACKUP PARA RESTAURAR
+================================================================
+
+Cuando hay un siniestro y necesitas restaurar al cliente:
+
+----------------------------------------------------------------
+Opcion A: Descargar desde el navegador (mas simple)
+----------------------------------------------------------------
+
+  1. Ir a https://secure.backblaze.com/b2_buckets.htm
+  2. Iniciar sesion con tu cuenta de tecnico
+  3. Clic en el bucket del cliente
+  4. Buscar el backup mas reciente
+  5. Clic en el nombre del archivo -> Download
+
+----------------------------------------------------------------
+Opcion B: Descargar desde la terminal con el cliente b2
+----------------------------------------------------------------
+
+  Instalar el cliente b2 en tu PC:
+    pip install b2
+
+  Autenticar:
+    b2 authorize-account TU_KEY_ID TU_APP_KEY
+
+  Listar los backups disponibles del cliente:
+    b2 ls backup-clientejuan
+
+  Descargar el mas reciente:
+    b2 download-file-by-name backup-clientejuan \
+       backup_mibasededatos_20260530_080000.sql.gz \
+       ./backup_restaurar.sql.gz
+
+  Restaurar en el nuevo equipo:
+    gunzip -c backup_restaurar.sql.gz | \
+    docker compose exec -T mysql mysql \
+        -u usuario -ppassword mibasededatos
+
+
+================================================================
+RESUMEN: CHECKLIST POR CLIENTE NUEVO
+================================================================
+
+  [ ] Ingresar a backblaze.com con tu cuenta de tecnico
+  [ ] Crear bucket: backup-[nombrecliente]  (Private)
+  [ ] Crear App Key limitada a ese bucket
+  [ ] Copiar y guardar keyID y applicationKey
+  [ ] Completar backup/.env con B2_KEY_ID, B2_APP_KEY, B2_BUCKET
+
+================================================================
+FIN DOCUMENTO 3
+================================================================
