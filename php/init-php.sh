@@ -907,7 +907,7 @@ sym_exec() {
 ($USE_AUTH || $USE_ADMIN) && sym_exec "composer require --no-interaction symfony/twig-bundle"
 $USE_AUTH         && sym_exec "composer require --no-interaction symfony/security-bundle symfony/validator"
 $USE_JWT          && sym_exec "composer require --no-interaction lexik/jwt-authentication-bundle"
-$USE_ADMIN        && sym_exec "composer require --no-interaction easycorp/easyadmin-bundle"
+$USE_ADMIN        && sym_exec "composer require --no-interaction easycorp/easyadmin-bundle vich/uploader-bundle"
 
 sym_exec "composer require --no-interaction --dev symfony/maker-bundle symfony/debug-bundle"
 # Composer puede crear carpetas nuevas como root; normalizar antes de copiar stubs desde el host.
