@@ -184,14 +184,9 @@ abstract class BaseCrudController extends AbstractCrudController
             }
         } catch (\ReflectionException $e) {}
 
-        $candidates = [
-            'App\\Entity\\' . $entityName,
-        ];
-
-        foreach ($candidates as $candidate) {
-            if (class_exists($candidate)) {
-                return $candidate;
-            }
+        $candidate = 'App\\Entity\\' . $entityName;
+        if (class_exists($candidate)) {
+            return $candidate;
         }
 
         throw new \RuntimeException(sprintf(
