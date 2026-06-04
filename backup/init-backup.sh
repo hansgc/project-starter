@@ -176,6 +176,11 @@ else
 
   step "Configuración de Cron"
   BACKUP_SCHEDULE=$(ask_input "Expresión cron para ejecutar backups" "0 * * * *")
+
+  step "Configuración de Producción"
+  PORT_DEV=$(ask_input "Puerto desarrollo" "8080")
+  PORT_PROD=$(ask_input "Puerto producción" "80")
+  PROD_SERVER_IP=$(ask_input "IP servidor producción" "")
 fi
 
 step "Verificando red y conexión a MySQL"

@@ -61,6 +61,7 @@ if [[ -n "$CONFIG_FILE" ]]; then
 
   PMA_PORT_DEV="${PMA_PORT_DEV:-${PMA_PORT:-8081}}"
   PMA_PORT_PROD="${PMA_PORT_PROD:-80}"
+  PROD_SERVER_IP="${PROD_SERVER_IP:-}"
   PMA_HOST="${PMA_HOST:-host.docker.internal}"
   PMA_DB_PORT="${PMA_DB_PORT:-3306}"
   PMA_ARBITRARY="${PMA_ARBITRARY:-1}"
@@ -78,6 +79,7 @@ else
 
   PMA_PORT_DEV=$(ask_input "Puerto local dev para acceder al panel web" "8081")
   PMA_PORT_PROD=$(ask_input "Puerto local prod para acceder al panel web" "80")
+  PROD_SERVER_IP=$(ask_input "IP servidor producción" "")
   PMA_HOST=$(ask_input "Host de la base de datos MySQL (ej: host.docker.internal o nombre-contenedor)" "host.docker.internal")
   PMA_DB_PORT=$(ask_input "Puerto de la base de datos MySQL" "3306")
   DB_NETWORK=$(ask_input "Red Docker externa a unirse (dejar vacío para usar host.docker.internal)" "")
@@ -207,6 +209,7 @@ step "Generando variables de entorno (.env)"
 cat > .env.example <<ENV
 PMA_PORT_DEV=${PMA_PORT_DEV}
 PMA_PORT_PROD=${PMA_PORT_PROD}
+PROD_SERVER_IP=
 PMA_HOST=${PMA_HOST}
 PMA_DB_PORT=${PMA_DB_PORT}
 PMA_ARBITRARY=${PMA_ARBITRARY}
@@ -216,6 +219,7 @@ ENV
 cat > .env <<ENV
 PMA_PORT_DEV=${PMA_PORT_DEV}
 PMA_PORT_PROD=${PMA_PORT_PROD}
+PROD_SERVER_IP=${PROD_SERVER_IP}
 PMA_HOST=${PMA_HOST}
 PMA_DB_PORT=${PMA_DB_PORT}
 PMA_ARBITRARY=${PMA_ARBITRARY}
@@ -271,6 +275,24 @@ step "Generando .gitignore"
 cat > .gitignore <<GIT
 .env
 GIT
+
+# --- Generando leeme.txt ---
+step "Generando leeme.txt"
+
+{
+  echo "desarrollo:"
+  echo "-----------"
+  echo "make up"
+  echo "http://localhost:${PMA_PORT_DEV}"
+  echo ""
+  echo "producción:"
+  echo "-----------"
+  if [[ -n "${PROD_SERVER_IP}" ]]; then
+    echo "http://${PROD_SERVER_IP}:${PMA_PORT_PROD}"
+  else
+    echo "http://localhost:${PMA_PORT_PROD}"
+  fi
+} > leeme.txt
 
 # --- Levantando el contenedor ---
 step "Levantando contenedor phpMyAdmin..."

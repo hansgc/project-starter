@@ -62,11 +62,12 @@ if [[ -n "$CONFIG_FILE" ]]; then
   MYSQL_VERSION="${MYSQL_VERSION:-8.0}"
   MYSQL_PORT_DEV="${MYSQL_PORT_DEV:-${MYSQL_PORT:-3306}}"
   MYSQL_PORT_PROD="${MYSQL_PORT_PROD:-3306}"
+  PROD_SERVER_IP="${PROD_SERVER_IP:-}"
   DB_NAME="${DB_NAME:-app_db}"
   DB_USER="${DB_USER:-app_user}"
   DB_PASSWORD="${DB_PASSWORD:-secret_password}"
   DB_ROOT_PASSWORD="${DB_ROOT_PASSWORD:-secret_root_password}"
-  MYSQL_NETWORK="${MYSQL_NETWORK:-}"
+  DB_NETWORK="${DB_NETWORK:-}"
 
 else
   # --- Modo interactivo ---
@@ -81,15 +82,16 @@ else
   MYSQL_VERSION=$(ask_input "Versión de MySQL (imagen oficial)" "8.0")
   MYSQL_PORT_DEV=$(ask_input "Puerto local dev mapeado en el host" "3306")
   MYSQL_PORT_PROD=$(ask_input "Puerto local prod mapeado en el host" "3306")
+  PROD_SERVER_IP=$(ask_input "IP servidor producción" "")
   DB_NAME=$(ask_input "Nombre de la base de datos" "app_db")
   DB_USER=$(ask_input "Usuario inicial" "app_user")
   DB_PASSWORD=$(ask_input "Contraseña del usuario inicial" "secret_password")
   DB_ROOT_PASSWORD=$(ask_input "Contraseña de ROOT" "secret_root_password")
-  MYSQL_NETWORK=$(ask_input "Red Docker compartida" "")
+  DB_NETWORK=$(ask_input "Red Docker compartida" "")
 fi
 
 PROJECT_SLUG=$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')
-MYSQL_NETWORK="${MYSQL_NETWORK:-${PROJECT_SLUG}_net}"
+DB_NETWORK="${DB_NETWORK:-${PROJECT_SLUG}_net}"
 
 # --- Crear estructura de directorios ---
 step "Creando estructura de directorios"
@@ -103,7 +105,8 @@ mkdir -p aDespliegue/prod
 # --- aDespliegue/dev/docker-compose.yml ---
 step "Generando docker-compose.yml dev"
 
-cat > aDespliegue/dev/docker-compose.yml <<YAML
+if [[ -n "$DB_NETWORK" ]]; then
+  cat > aDespliegue/dev/docker-compose.yml <<YAML
 services:
   ${PROJECT_SLUG}_db:
     image: mysql:${MYSQL_VERSION}
@@ -119,21 +122,51 @@ services:
     volumes:
       - ${PROJECT_SLUG}_db_data:/var/lib/mysql
     networks:
-      - ${MYSQL_NETWORK}
+      - ${DB_NETWORK}
 
 volumes:
   ${PROJECT_SLUG}_db_data:
     name: ${PROJECT_SLUG}_db_data
 
 networks:
-  ${MYSQL_NETWORK}:
-    name: ${MYSQL_NETWORK}
+  ${DB_NETWORK}:
+    name: ${DB_NETWORK}
+    external: true
 YAML
+else
+  cat > aDespliegue/dev/docker-compose.yml <<YAML
+services:
+  ${PROJECT_SLUG}_db:
+    image: mysql:${MYSQL_VERSION}
+    container_name: ${PROJECT_SLUG}_db
+    restart: "no"
+    environment:
+      MYSQL_ROOT_PASSWORD: "\${DB_ROOT_PASSWORD}"
+      MYSQL_DATABASE: "\${DB_NAME}"
+      MYSQL_USER: "\${DB_USER}"
+      MYSQL_PASSWORD: "\${DB_PASSWORD}"
+    ports:
+      - "\${MYSQL_PORT_DEV}:3306"
+    volumes:
+      - ${PROJECT_SLUG}_db_data:/var/lib/mysql
+    networks:
+      - \${DB_NETWORK}
+
+volumes:
+  ${PROJECT_SLUG}_db_data:
+    name: ${PROJECT_SLUG}_db_data
+
+networks:
+  \${DB_NETWORK}:
+    name: \${DB_NETWORK}
+YAML
+fi
 
 # --- aDespliegue/prod/docker-compose.yml ---
 step "Generando docker-compose.yml prod"
 
-cat > aDespliegue/prod/docker-compose.yml <<YAML
+if [[ -n "$DB_NETWORK" ]]; then
+  cat > aDespliegue/prod/docker-compose.yml <<YAML
 services:
   ${PROJECT_SLUG}_db_prod:
     image: mysql:${MYSQL_VERSION}
@@ -149,16 +182,45 @@ services:
     volumes:
       - ${PROJECT_SLUG}_db_data_prod:/var/lib/mysql
     networks:
-      - ${MYSQL_NETWORK}
+      - ${DB_NETWORK}
 
 volumes:
   ${PROJECT_SLUG}_db_data_prod:
     name: ${PROJECT_SLUG}_db_data_prod
 
 networks:
-  ${MYSQL_NETWORK}:
-    name: ${MYSQL_NETWORK}
+  ${DB_NETWORK}:
+    name: ${DB_NETWORK}
+    external: true
 YAML
+else
+  cat > aDespliegue/prod/docker-compose.yml <<YAML
+services:
+  ${PROJECT_SLUG}_db_prod:
+    image: mysql:${MYSQL_VERSION}
+    container_name: ${PROJECT_SLUG}_db_prod
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: "\${DB_ROOT_PASSWORD}"
+      MYSQL_DATABASE: "\${DB_NAME}"
+      MYSQL_USER: "\${DB_USER}"
+      MYSQL_PASSWORD: "\${DB_PASSWORD}"
+    ports:
+      - "\${MYSQL_PORT_PROD}:3306"
+    volumes:
+      - ${PROJECT_SLUG}_db_data_prod:/var/lib/mysql
+    networks:
+      - \${DB_NETWORK}
+
+volumes:
+  ${PROJECT_SLUG}_db_data_prod:
+    name: ${PROJECT_SLUG}_db_data_prod
+
+networks:
+  \${DB_NETWORK}:
+    name: \${DB_NETWORK}
+YAML
+fi
 
 # --- Generando .env y .env.example ---
 step "Generando variables de entorno (.env)"
@@ -167,22 +229,24 @@ cat > .env.example <<ENV
 MYSQL_VERSION=${MYSQL_VERSION}
 MYSQL_PORT_DEV=${MYSQL_PORT_DEV}
 MYSQL_PORT_PROD=${MYSQL_PORT_PROD}
+PROD_SERVER_IP=
 DB_NAME=${DB_NAME}
 DB_USER=${DB_USER}
 DB_PASSWORD=YOUR_DB_PASSWORD
 DB_ROOT_PASSWORD=YOUR_ROOT_PASSWORD
-MYSQL_NETWORK=${MYSQL_NETWORK}
+DB_NETWORK=${DB_NETWORK}
 ENV
 
 cat > .env <<ENV
 MYSQL_VERSION=${MYSQL_VERSION}
 MYSQL_PORT_DEV=${MYSQL_PORT_DEV}
 MYSQL_PORT_PROD=${MYSQL_PORT_PROD}
+PROD_SERVER_IP=${PROD_SERVER_IP}
 DB_NAME=${DB_NAME}
 DB_USER=${DB_USER}
 DB_PASSWORD=${DB_PASSWORD}
 DB_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
-MYSQL_NETWORK=${MYSQL_NETWORK}
+DB_NETWORK=${DB_NETWORK}
 ENV
 
 # --- Generando Makefile ---
@@ -264,6 +328,24 @@ cat > .gitignore <<GIT
 .env
 backups/
 GIT
+
+# --- Generando leeme.txt ---
+step "Generando leeme.txt"
+
+{
+  echo "desarrollo:"
+  echo "-----------"
+  echo "make up"
+  echo "localhost:${MYSQL_PORT_DEV}"
+  echo ""
+  echo "producción:"
+  echo "-----------"
+  if [[ -n "${PROD_SERVER_IP}" ]]; then
+    echo "${PROD_SERVER_IP}:${MYSQL_PORT_PROD}"
+  else
+    echo "localhost:${MYSQL_PORT_PROD}"
+  fi
+} > leeme.txt
 
 # --- Levantando el contenedor ---
 step "Levantando contenedor MySQL..."
