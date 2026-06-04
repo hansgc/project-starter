@@ -200,9 +200,10 @@ cd "$PROJECT_FOLDER"
 
 mkdir -p .devcontainer
 mkdir -p aDespliegue/dev
+mkdir -p aDespliegue/prod
 mkdir -p app
 
-step "Generando Dockerfile"
+step "Generando Dockerfile dev"
 
 cat > aDespliegue/dev/Dockerfile <<'DOCKERFILE'
 FROM debian:bookworm-slim
@@ -231,7 +232,7 @@ RUN mkdir -p /backups/pendientes /backups/enviados
 ENTRYPOINT ["/entrypoint.sh"]
 DOCKERFILE
 
-step "Generando docker-compose.yml"
+step "Generando docker-compose.yml dev"
 
 cat > aDespliegue/dev/docker-compose.yml <<YAML
 services:
@@ -241,6 +242,7 @@ services:
       dockerfile: aDespliegue/dev/Dockerfile
     container_name: ${PROJECT_SLUG}-backup-dev
     image: ${PROJECT_SLUG}-backup-dev
+    restart: "no"
     env_file: ../../.env
     ports:
       - "${PORT_DEV}:${PORT_DEV}"
@@ -249,10 +251,63 @@ services:
       - backup_data:/backups
     networks:
       - ${DB_NETWORK}
-    restart: unless-stopped
 
 volumes:
   backup_data:
+
+networks:
+  ${DB_NETWORK}:
+    external: true
+YAML
+
+step "Generando Dockerfile prod"
+
+cat > aDespliegue/prod/Dockerfile <<'DOCKERFILE'
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y \
+    default-mysql-client \
+    cron \
+    curl \
+    gzip \
+    python3 \
+    python3-pip \
+    && pip3 install b2 --break-system-packages \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY app/backup.sh /usr/local/bin/backup.sh
+COPY app/crontab /etc/cron.d/backup-cron
+COPY app/entrypoint.sh /entrypoint.sh
+
+RUN chmod +x /usr/local/bin/backup.sh \
+    && chmod +x /entrypoint.sh \
+    && chmod 0644 /etc/cron.d/backup-cron \
+    && crontab /etc/cron.d/backup-cron
+
+RUN mkdir -p /backups/pendientes /backups/enviados
+
+ENTRYPOINT ["/entrypoint.sh"]
+DOCKERFILE
+
+step "Generando docker-compose.yml prod"
+
+cat > aDespliegue/prod/docker-compose.yml <<YAML
+services:
+  backup:
+    build:
+      context: ../..
+      dockerfile: aDespliegue/prod/Dockerfile
+    container_name: ${PROJECT_SLUG}-backup-prod
+    image: ${PROJECT_SLUG}-backup-prod
+    restart: unless-stopped
+    env_file: ../../.env
+    volumes:
+      - backup_data_prod:/backups
+    networks:
+      - ${DB_NETWORK}
+
+volumes:
+  backup_data_prod:
 
 networks:
   ${DB_NETWORK}:
@@ -530,9 +585,10 @@ chmod +x app/backup.sh
 step "Generando Makefile"
 
 cat > Makefile <<'MAKE'
-.PHONY: up down start stop logs logs-backup sh backup-now backup-logs
+.PHONY: up down start stop logs logs-backup sh backup-now backup-logs dev-up dev-down prod-up prod-down build dev-build prod-build
 
-ENV_DIR = aDespliegue/dev
+ENV ?= dev
+ENV_DIR = aDespliegue/$(ENV)
 include .env
 export
 
@@ -541,6 +597,9 @@ up:
 
 down:
 	docker compose --env-file .env -f $(ENV_DIR)/docker-compose.yml down
+
+build:
+	docker compose --env-file .env -f $(ENV_DIR)/docker-compose.yml build --no-cache
 
 start: up
 
@@ -560,6 +619,24 @@ backup-now:
 
 backup-logs:
 	docker compose --env-file .env -f $(ENV_DIR)/docker-compose.yml exec backup tail -f /var/log/backup.log
+
+dev-up:
+	$(MAKE) up ENV=dev
+
+dev-down:
+	$(MAKE) down ENV=dev
+
+dev-build:
+	$(MAKE) build ENV=dev
+
+prod-up:
+	$(MAKE) up ENV=prod
+
+prod-down:
+	$(MAKE) down ENV=prod
+
+prod-build:
+	$(MAKE) build ENV=prod
 MAKE
 
 step "Generando README.md"
@@ -575,6 +652,9 @@ Sistema automático de backup de base de datos MySQL con envío directo a Backbl
 ${PROJECT_FOLDER}/
 ├── .devcontainer/
 ├── aDespliegue/dev/
+│   ├── docker-compose.yml
+│   └── Dockerfile
+├── aDespliegue/prod/
 │   ├── docker-compose.yml
 │   └── Dockerfile
 ├── app/
@@ -598,6 +678,12 @@ ${PROJECT_FOLDER}/
 
 ```bash
 make up
+```
+
+Para producción:
+
+```bash
+make prod-up
 ```
 
 5. Verifica logs:
@@ -667,6 +753,7 @@ echo "  Estructura creada:"
 echo "    ${PROJECT_FOLDER}/"
 echo "    ├── .devcontainer/"
 echo "    ├── aDespliegue/dev/"
+echo "    ├── aDespliegue/prod/"
 echo "    ├── app/"
 echo "    ├── Makefile"
 echo "    ├── .env"

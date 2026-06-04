@@ -533,6 +533,7 @@ services:
       context: ../..
       dockerfile: aDespliegue/prod/Dockerfile
     container_name: ${PROD_PHP_NAME}
+    restart: unless-stopped
     environment:
       APP_ENV: prod
       APP_DEBUG: "0"
@@ -551,6 +552,7 @@ cat >> aDespliegue/prod/docker-compose.yml <<YAML
   ${PROD_NGINX_SERVICE}:
     image: nginx:alpine
     container_name: ${PROD_NGINX_NAME}
+    restart: unless-stopped
     ports:
       - "${PORT_PROD}:80"
     volumes:
@@ -743,28 +745,38 @@ fi
 step "Generando Makefile"
 
 cat > Makefile <<MAKE
-.PHONY: up down build serve start stop sh cc logs logs-symfony ps migrate migration jwt-keys prod-build prod-up
+.PHONY: up down build serve start stop sh cc logs logs-symfony ps migrate migration jwt-keys dev-up dev-down dev-build prod-up prod-down prod-build
 
-ENV_DIR = aDespliegue/dev
-RUN_PHP = docker compose -f \$(ENV_DIR)/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE}
+ENV ?= dev
+ENV_DIR = aDespliegue/\$(ENV)
+PHP_SERVICE_dev = ${DEV_PHP_SERVICE}
+PHP_SERVICE_prod = ${PROD_PHP_SERVICE}
+PHP_SERVICE = \$(PHP_SERVICE_\$(ENV))
+APP_DIR_dev = /workspace/app
+APP_DIR_prod = /workspace
+APP_DIR = \$(APP_DIR_\$(ENV))
+RUN_PHP = docker compose -f \$(ENV_DIR)/docker-compose.yml exec -w \$(APP_DIR) \$(PHP_SERVICE)
 
 up:
 	docker compose -f \$(ENV_DIR)/docker-compose.yml up -d
 
 down:
-	\$(RUN_PHP) symfony server:stop 2>/dev/null || true
+	@if [ "\$(ENV)" = "dev" ]; then \$(RUN_PHP) symfony server:stop 2>/dev/null || true; fi
 	docker compose -f \$(ENV_DIR)/docker-compose.yml down
 
 build:
 	docker compose -f \$(ENV_DIR)/docker-compose.yml build --no-cache
 
 serve:
+	@test "\$(ENV)" = "dev" || (echo "serve solo aplica para ENV=dev"; exit 1)
 	\$(RUN_PHP) symfony server:start --no-tls --port=8000 --daemon
 
 stop:
+	@test "\$(ENV)" = "dev" || (echo "stop solo aplica para ENV=dev"; exit 1)
 	\$(RUN_PHP) symfony server:stop
 
-start: up serve
+start: up
+	@if [ "\$(ENV)" = "dev" ]; then \$(MAKE) serve; fi
 
 sh:
 	\$(RUN_PHP) bash
@@ -780,6 +792,15 @@ logs-symfony:
 
 ps:
 	docker compose -f \$(ENV_DIR)/docker-compose.yml ps
+
+dev-up:
+	\$(MAKE) up ENV=dev
+
+dev-down:
+	\$(MAKE) down ENV=dev
+
+dev-build:
+	\$(MAKE) build ENV=dev
 
 MAKE
 
@@ -800,19 +821,29 @@ MAKE
 
 cat >> Makefile <<MAKE
 prod-build:
-	docker compose -f aDespliegue/prod/docker-compose.yml build --no-cache
+	\$(MAKE) build ENV=prod
 
 prod-up:
-	docker compose -f aDespliegue/prod/docker-compose.yml up -d
+	\$(MAKE) up ENV=prod
+
+prod-down:
+	\$(MAKE) down ENV=prod
 
 MAKE
 
 if ! $USE_SYMFONY; then
   cat > Makefile <<MAKE
-.PHONY: up down build start stop sh logs ps prod-build prod-up
+.PHONY: up down build start stop sh logs ps dev-up dev-down dev-build prod-up prod-down prod-build
 
-ENV_DIR = aDespliegue/dev
-RUN_PHP = docker compose -f \$(ENV_DIR)/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE}
+ENV ?= dev
+ENV_DIR = aDespliegue/\$(ENV)
+PHP_SERVICE_dev = ${DEV_PHP_SERVICE}
+PHP_SERVICE_prod = ${PROD_PHP_SERVICE}
+PHP_SERVICE = \$(PHP_SERVICE_\$(ENV))
+APP_DIR_dev = /workspace/app
+APP_DIR_prod = /workspace
+APP_DIR = \$(APP_DIR_\$(ENV))
+RUN_PHP = docker compose -f \$(ENV_DIR)/docker-compose.yml exec -w \$(APP_DIR) \$(PHP_SERVICE)
 
 up:
 	docker compose -f \$(ENV_DIR)/docker-compose.yml up -d
@@ -836,11 +867,23 @@ logs:
 ps:
 	docker compose -f \$(ENV_DIR)/docker-compose.yml ps
 
+dev-up:
+	\$(MAKE) up ENV=dev
+
+dev-down:
+	\$(MAKE) down ENV=dev
+
+dev-build:
+	\$(MAKE) build ENV=dev
+
 prod-build:
-	docker compose -f aDespliegue/prod/docker-compose.yml build --no-cache
+	\$(MAKE) build ENV=prod
 
 prod-up:
-	docker compose -f aDespliegue/prod/docker-compose.yml up -d
+	\$(MAKE) up ENV=prod
+
+prod-down:
+	\$(MAKE) down ENV=prod
 
 MAKE
 fi

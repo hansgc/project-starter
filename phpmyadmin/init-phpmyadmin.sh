@@ -59,7 +59,8 @@ if [[ -n "$CONFIG_FILE" ]]; then
     PROJECT_NAME="pma-project"
   fi
 
-  PMA_PORT="${PMA_PORT:-8081}"
+  PMA_PORT_DEV="${PMA_PORT_DEV:-${PMA_PORT:-8081}}"
+  PMA_PORT_PROD="${PMA_PORT_PROD:-80}"
   PMA_HOST="${PMA_HOST:-host.docker.internal}"
   PMA_DB_PORT="${PMA_DB_PORT:-3306}"
   PMA_ARBITRARY="${PMA_ARBITRARY:-1}"
@@ -75,7 +76,8 @@ else
     echo "Error: el nombre no puede estar vacío."; exit 1
   fi
 
-  PMA_PORT=$(ask_input "Puerto local para acceder al panel web" "8081")
+  PMA_PORT_DEV=$(ask_input "Puerto local dev para acceder al panel web" "8081")
+  PMA_PORT_PROD=$(ask_input "Puerto local prod para acceder al panel web" "80")
   PMA_HOST=$(ask_input "Host de la base de datos MySQL (ej: host.docker.internal o nombre-contenedor)" "host.docker.internal")
   PMA_DB_PORT=$(ask_input "Puerto de la base de datos MySQL" "3306")
   DB_NETWORK=$(ask_input "Red Docker externa a unirse (dejar vacío para usar host.docker.internal)" "")
@@ -93,25 +95,26 @@ mkdir -p "$PROJECT_SLUG"
 cd "$PROJECT_SLUG"
 
 mkdir -p aDespliegue/dev
+mkdir -p aDespliegue/prod
 
 # --- aDespliegue/dev/docker-compose.yml ---
-step "Generando docker-compose.yml"
+step "Generando docker-compose.yml dev"
 
 if [[ -n "$DB_NETWORK" ]]; then
   # Con red externa: phpMyAdmin se une a la red del contenedor MySQL
   cat > aDespliegue/dev/docker-compose.yml <<YAML
 services:
-  ${PROJECT_SLUG}_pma:
+  ${PROJECT_SLUG}_pma_dev:
     image: phpmyadmin:latest
-    container_name: ${PROJECT_SLUG}_pma
-    restart: always
+    container_name: ${PROJECT_SLUG}_pma_dev
+    restart: "no"
     environment:
       PMA_HOST: "\${PMA_HOST}"
       PMA_PORT: "\${PMA_DB_PORT}"
       PMA_ARBITRARY: "\${PMA_ARBITRARY}"
-      PMA_ABSOLUTE_URI: "http://localhost:\${PMA_PORT}/"
+      PMA_ABSOLUTE_URI: "http://localhost:\${PMA_PORT_DEV}/"
     ports:
-      - "\${PMA_PORT}:80"
+      - "\${PMA_PORT_DEV}:80"
     networks:
       - db_external
 
@@ -124,17 +127,17 @@ else
   # Sin red externa: usa host.docker.internal
   cat > aDespliegue/dev/docker-compose.yml <<YAML
 services:
-  ${PROJECT_SLUG}_pma:
+  ${PROJECT_SLUG}_pma_dev:
     image: phpmyadmin:latest
-    container_name: ${PROJECT_SLUG}_pma
-    restart: always
+    container_name: ${PROJECT_SLUG}_pma_dev
+    restart: "no"
     environment:
       PMA_HOST: "\${PMA_HOST}"
       PMA_PORT: "\${PMA_DB_PORT}"
       PMA_ARBITRARY: "\${PMA_ARBITRARY}"
-      PMA_ABSOLUTE_URI: "http://localhost:\${PMA_PORT}/"
+      PMA_ABSOLUTE_URI: "http://localhost:\${PMA_PORT_DEV}/"
     ports:
-      - "\${PMA_PORT}:80"
+      - "\${PMA_PORT_DEV}:80"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
@@ -146,11 +149,64 @@ networks:
 YAML
 fi
 
+# --- aDespliegue/prod/docker-compose.yml ---
+step "Generando docker-compose.yml prod"
+
+if [[ -n "$DB_NETWORK" ]]; then
+  # Con red externa: phpMyAdmin se une a la red del contenedor MySQL
+  cat > aDespliegue/prod/docker-compose.yml <<YAML
+services:
+  ${PROJECT_SLUG}_pma_prod:
+    image: phpmyadmin:latest
+    container_name: ${PROJECT_SLUG}_pma_prod
+    restart: unless-stopped
+    environment:
+      PMA_HOST: "\${PMA_HOST}"
+      PMA_PORT: "\${PMA_DB_PORT}"
+      PMA_ARBITRARY: "\${PMA_ARBITRARY}"
+      PMA_ABSOLUTE_URI: "http://localhost:\${PMA_PORT_PROD}/"
+    ports:
+      - "\${PMA_PORT_PROD}:80"
+    networks:
+      - db_external
+
+networks:
+  db_external:
+    name: ${DB_NETWORK}
+    external: true
+YAML
+else
+  # Sin red externa: usa host.docker.internal
+  cat > aDespliegue/prod/docker-compose.yml <<YAML
+services:
+  ${PROJECT_SLUG}_pma_prod:
+    image: phpmyadmin:latest
+    container_name: ${PROJECT_SLUG}_pma_prod
+    restart: unless-stopped
+    environment:
+      PMA_HOST: "\${PMA_HOST}"
+      PMA_PORT: "\${PMA_DB_PORT}"
+      PMA_ARBITRARY: "\${PMA_ARBITRARY}"
+      PMA_ABSOLUTE_URI: "http://localhost:\${PMA_PORT_PROD}/"
+    ports:
+      - "\${PMA_PORT_PROD}:80"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - ${PROJECT_SLUG}_prod_net
+
+networks:
+  ${PROJECT_SLUG}_prod_net:
+    name: ${PROJECT_SLUG}_prod_net
+YAML
+fi
+
 # --- Generando .env y .env.example ---
 step "Generando variables de entorno (.env)"
 
 cat > .env.example <<ENV
-PMA_PORT=${PMA_PORT}
+PMA_PORT_DEV=${PMA_PORT_DEV}
+PMA_PORT_PROD=${PMA_PORT_PROD}
 PMA_HOST=${PMA_HOST}
 PMA_DB_PORT=${PMA_DB_PORT}
 PMA_ARBITRARY=${PMA_ARBITRARY}
@@ -158,7 +214,8 @@ DB_NETWORK=${DB_NETWORK}
 ENV
 
 cat > .env <<ENV
-PMA_PORT=${PMA_PORT}
+PMA_PORT_DEV=${PMA_PORT_DEV}
+PMA_PORT_PROD=${PMA_PORT_PROD}
 PMA_HOST=${PMA_HOST}
 PMA_DB_PORT=${PMA_DB_PORT}
 PMA_ARBITRARY=${PMA_ARBITRARY}
@@ -169,9 +226,13 @@ ENV
 step "Generando Makefile"
 
 cat > Makefile <<MAKE
-.PHONY: up down start stop logs sh
+.PHONY: up down start stop logs sh dev-up dev-down prod-up prod-down
 
-ENV_DIR = aDespliegue/dev
+ENV ?= dev
+ENV_DIR = aDespliegue/\$(ENV)
+PMA_SERVICE_dev = ${PROJECT_SLUG}_pma_dev
+PMA_SERVICE_prod = ${PROJECT_SLUG}_pma_prod
+PMA_SERVICE = \$(PMA_SERVICE_\$(ENV))
 include .env
 export
 
@@ -189,7 +250,19 @@ logs:
 	docker compose --env-file .env -f \$(ENV_DIR)/docker-compose.yml logs -f
 
 sh:
-	docker compose --env-file .env -f \$(ENV_DIR)/docker-compose.yml exec ${PROJECT_SLUG}_pma sh
+	docker compose --env-file .env -f \$(ENV_DIR)/docker-compose.yml exec \$(PMA_SERVICE) sh
+
+dev-up:
+	\$(MAKE) up ENV=dev
+
+dev-down:
+	\$(MAKE) down ENV=dev
+
+prod-up:
+	\$(MAKE) up ENV=prod
+
+prod-down:
+	\$(MAKE) down ENV=prod
 MAKE
 
 # --- Generando .gitignore ---
@@ -215,12 +288,14 @@ echo ""
 echo "  Estructura creada:"
 echo "    ${PROJECT_SLUG}/"
 echo "    ├── aDespliegue/dev/docker-compose.yml"
+echo "    ├── aDespliegue/prod/docker-compose.yml"
 echo "    ├── Makefile"
 echo "    ├── .env"
 echo "    └── .gitignore"
 echo ""
 echo "  Acceso Web:"
-echo "    URL:         http://localhost:${PMA_PORT}"
+echo "    URL dev:     http://localhost:${PMA_PORT_DEV}"
+echo "    URL prod:    http://localhost:${PMA_PORT_PROD}"
 echo "    Host MySQL:  ${PMA_HOST}"
 if [[ -n "$DB_NETWORK" ]]; then
   echo "    Red Docker:  ${DB_NETWORK} (externa)"
@@ -231,4 +306,5 @@ echo "  Comandos:"
 echo "    make start  → iniciar phpMyAdmin"
 echo "    make stop   → detener phpMyAdmin"
 echo "    make logs   → ver logs en tiempo real"
+echo "    make prod-up → iniciar phpMyAdmin en prod"
 echo ""

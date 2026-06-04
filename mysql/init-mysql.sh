@@ -60,7 +60,8 @@ if [[ -n "$CONFIG_FILE" ]]; then
   fi
 
   MYSQL_VERSION="${MYSQL_VERSION:-8.0}"
-  MYSQL_PORT="${MYSQL_PORT:-3306}"
+  MYSQL_PORT_DEV="${MYSQL_PORT_DEV:-${MYSQL_PORT:-3306}}"
+  MYSQL_PORT_PROD="${MYSQL_PORT_PROD:-3306}"
   DB_NAME="${DB_NAME:-app_db}"
   DB_USER="${DB_USER:-app_user}"
   DB_PASSWORD="${DB_PASSWORD:-secret_password}"
@@ -78,7 +79,8 @@ else
   fi
 
   MYSQL_VERSION=$(ask_input "Versión de MySQL (imagen oficial)" "8.0")
-  MYSQL_PORT=$(ask_input "Puerto local mapeado en el host" "3306")
+  MYSQL_PORT_DEV=$(ask_input "Puerto local dev mapeado en el host" "3306")
+  MYSQL_PORT_PROD=$(ask_input "Puerto local prod mapeado en el host" "3306")
   DB_NAME=$(ask_input "Nombre de la base de datos" "app_db")
   DB_USER=$(ask_input "Usuario inicial" "app_user")
   DB_PASSWORD=$(ask_input "Contraseña del usuario inicial" "secret_password")
@@ -96,23 +98,24 @@ mkdir -p "$PROJECT_SLUG"
 cd "$PROJECT_SLUG"
 
 mkdir -p aDespliegue/dev
+mkdir -p aDespliegue/prod
 
 # --- aDespliegue/dev/docker-compose.yml ---
-step "Generando docker-compose.yml"
+step "Generando docker-compose.yml dev"
 
 cat > aDespliegue/dev/docker-compose.yml <<YAML
 services:
   ${PROJECT_SLUG}_db:
     image: mysql:${MYSQL_VERSION}
     container_name: ${PROJECT_SLUG}_db
-    restart: always
+    restart: "no"
     environment:
       MYSQL_ROOT_PASSWORD: "\${DB_ROOT_PASSWORD}"
       MYSQL_DATABASE: "\${DB_NAME}"
       MYSQL_USER: "\${DB_USER}"
       MYSQL_PASSWORD: "\${DB_PASSWORD}"
     ports:
-      - "\${MYSQL_PORT}:3306"
+      - "\${MYSQL_PORT_DEV}:3306"
     volumes:
       - ${PROJECT_SLUG}_db_data:/var/lib/mysql
     networks:
@@ -127,12 +130,43 @@ networks:
     name: ${MYSQL_NETWORK}
 YAML
 
+# --- aDespliegue/prod/docker-compose.yml ---
+step "Generando docker-compose.yml prod"
+
+cat > aDespliegue/prod/docker-compose.yml <<YAML
+services:
+  ${PROJECT_SLUG}_db_prod:
+    image: mysql:${MYSQL_VERSION}
+    container_name: ${PROJECT_SLUG}_db_prod
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: "\${DB_ROOT_PASSWORD}"
+      MYSQL_DATABASE: "\${DB_NAME}"
+      MYSQL_USER: "\${DB_USER}"
+      MYSQL_PASSWORD: "\${DB_PASSWORD}"
+    ports:
+      - "\${MYSQL_PORT_PROD}:3306"
+    volumes:
+      - ${PROJECT_SLUG}_db_data_prod:/var/lib/mysql
+    networks:
+      - ${MYSQL_NETWORK}
+
+volumes:
+  ${PROJECT_SLUG}_db_data_prod:
+    name: ${PROJECT_SLUG}_db_data_prod
+
+networks:
+  ${MYSQL_NETWORK}:
+    name: ${MYSQL_NETWORK}
+YAML
+
 # --- Generando .env y .env.example ---
 step "Generando variables de entorno (.env)"
 
 cat > .env.example <<ENV
 MYSQL_VERSION=${MYSQL_VERSION}
-MYSQL_PORT=${MYSQL_PORT}
+MYSQL_PORT_DEV=${MYSQL_PORT_DEV}
+MYSQL_PORT_PROD=${MYSQL_PORT_PROD}
 DB_NAME=${DB_NAME}
 DB_USER=${DB_USER}
 DB_PASSWORD=YOUR_DB_PASSWORD
@@ -142,7 +176,8 @@ ENV
 
 cat > .env <<ENV
 MYSQL_VERSION=${MYSQL_VERSION}
-MYSQL_PORT=${MYSQL_PORT}
+MYSQL_PORT_DEV=${MYSQL_PORT_DEV}
+MYSQL_PORT_PROD=${MYSQL_PORT_PROD}
 DB_NAME=${DB_NAME}
 DB_USER=${DB_USER}
 DB_PASSWORD=${DB_PASSWORD}
@@ -154,9 +189,13 @@ ENV
 step "Generando Makefile"
 
 cat > Makefile <<MAKE
-.PHONY: up down start stop logs sh mysql mysql-root backup restore
+.PHONY: up down start stop logs sh mysql mysql-root backup restore dev-up dev-down prod-up prod-down
 
-ENV_DIR = aDespliegue/dev
+ENV ?= dev
+ENV_DIR = aDespliegue/\$(ENV)
+MYSQL_SERVICE_dev = ${PROJECT_SLUG}_db
+MYSQL_SERVICE_prod = ${PROJECT_SLUG}_db_prod
+MYSQL_SERVICE = \$(MYSQL_SERVICE_\$(ENV))
 include .env
 export
 
@@ -174,18 +213,18 @@ logs:
 	docker compose --env-file .env -f \$(ENV_DIR)/docker-compose.yml logs -f
 
 sh:
-	docker compose --env-file .env -f \$(ENV_DIR)/docker-compose.yml exec ${PROJECT_SLUG}_db bash
+	docker compose --env-file .env -f \$(ENV_DIR)/docker-compose.yml exec \$(MYSQL_SERVICE) bash
 
 mysql:
-	docker compose --env-file .env -f \$(ENV_DIR)/docker-compose.yml exec ${PROJECT_SLUG}_db mysql -u\$(DB_USER) -p\$(DB_PASSWORD) \$(DB_NAME)
+	docker compose --env-file .env -f \$(ENV_DIR)/docker-compose.yml exec \$(MYSQL_SERVICE) mysql -u\$(DB_USER) -p\$(DB_PASSWORD) \$(DB_NAME)
 
 mysql-root:
-	docker compose --env-file .env -f \$(ENV_DIR)/docker-compose.yml exec ${PROJECT_SLUG}_db mysql -uroot -p\$(DB_ROOT_PASSWORD) \$(DB_NAME)
+	docker compose --env-file .env -f \$(ENV_DIR)/docker-compose.yml exec \$(MYSQL_SERVICE) mysql -uroot -p\$(DB_ROOT_PASSWORD) \$(DB_NAME)
 
 backup:
 	@mkdir -p backups
 	@echo "Realizando copia de seguridad..."
-	docker compose --env-file .env -f \$(ENV_DIR)/docker-compose.yml exec -T ${PROJECT_SLUG}_db mysqldump -u\$(DB_USER) -p\$(DB_PASSWORD) \$(DB_NAME) > backups/backup_\$\$(date +%Y%m%d_%H%M%S).sql
+	docker compose --env-file .env -f \$(ENV_DIR)/docker-compose.yml exec -T \$(MYSQL_SERVICE) mysqldump -u\$(DB_USER) -p\$(DB_PASSWORD) \$(DB_NAME) > backups/backup_\$\$(date +%Y%m%d_%H%M%S).sql
 	@echo "Copia de seguridad guardada en backups/"
 
 restore:
@@ -198,12 +237,24 @@ restore:
 	@read -p "Ingresa el nombre del archivo de backup a restaurar (ej: backups/backup_xxx.sql): " backup_file; \\
 	if [ -f "\$\$backup_file" ]; then \\
 		echo "Restaurando \$\$backup_file..."; \\
-		docker compose --env-file .env -f \$(ENV_DIR)/docker-compose.yml exec -T ${PROJECT_SLUG}_db mysql -u\$(DB_USER) -p\$(DB_PASSWORD) \$(DB_NAME) < "\$\$backup_file"; \\
+		docker compose --env-file .env -f \$(ENV_DIR)/docker-compose.yml exec -T \$(MYSQL_SERVICE) mysql -u\$(DB_USER) -p\$(DB_PASSWORD) \$(DB_NAME) < "\$\$backup_file"; \\
 		echo "Restauración completada con éxito."; \\
 	else \\
 		echo "El archivo '\$\$backup_file' no existe."; \\
 		exit 1; \\
 	fi
+
+dev-up:
+	\$(MAKE) up ENV=dev
+
+dev-down:
+	\$(MAKE) down ENV=dev
+
+prod-up:
+	\$(MAKE) up ENV=prod
+
+prod-down:
+	\$(MAKE) down ENV=prod
 MAKE
 
 # --- Generando .gitignore ---
@@ -248,13 +299,15 @@ echo ""
 echo "  Estructura creada:"
 echo "    ${PROJECT_SLUG}/"
 echo "    ├── aDespliegue/dev/docker-compose.yml"
+echo "    ├── aDespliegue/prod/docker-compose.yml"
 echo "    ├── Makefile"
 echo "    ├── .env"
 echo "    └── .gitignore"
 echo ""
 echo "  Datos de Acceso:"
 echo "    Host:        localhost (desde tu máquina)"
-echo "    Puerto:      ${MYSQL_PORT}"
+echo "    Puerto dev:  ${MYSQL_PORT_DEV}"
+echo "    Puerto prod: ${MYSQL_PORT_PROD}"
 echo "    Database:    ${DB_NAME}"
 echo "    Usuario:     ${DB_USER}"
 echo "    Contraseña:  ${DB_PASSWORD}"
@@ -266,4 +319,5 @@ echo "    make stop   → detener base de datos"
 echo "    make mysql  → consola interactiva MySQL"
 echo "    make backup → crear backup en backups/"
 echo "    make logs   → ver logs en tiempo real"
+echo "    make prod-up → iniciar base de datos en prod"
 echo ""
