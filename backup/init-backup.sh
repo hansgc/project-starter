@@ -699,7 +699,7 @@ make up
 Para producción:
 
 ```bash
-make prod-up
+make up-prod
 ```
 
 5. Verifica logs:
