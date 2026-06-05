@@ -115,7 +115,6 @@ step "Creando estructura de directorios"
 mkdir -p "$PROJECT_SLUG"
 cd "$PROJECT_SLUG"
 
-mkdir -p .devcontainer
 mkdir -p aDespliegue/dev
 mkdir -p aDespliegue/prod
 
@@ -124,9 +123,9 @@ step "Generando docker-compose.yml dev"
 
 cat > aDespliegue/dev/docker-compose.yml <<YAML
 services:
-  ${PROJECT_SLUG}_db_dev:
+  ${PROJECT_SLUG}_dev:
     image: mysql:${MYSQL_VERSION}
-    container_name: ${PROJECT_SLUG}_db_dev
+    container_name: ${PROJECT_SLUG}_dev
     restart: "no"
     env_file: .env
     environment:
@@ -137,25 +136,17 @@ services:
     ports:
       - "\${MYSQL_PORT_DEV}:3306"
     volumes:
-      - ${PROJECT_SLUG}_db_data:/var/lib/mysql
+      - ${PROJECT_SLUG}_data:/var/lib/mysql
     networks:
-      - "\${DB_NETWORK_DEV}"
+      - db_network
 
-  dev:
-    image: mcr.microsoft.com/devcontainers/base:debian
-    container_name: ${PROJECT_SLUG}_dev
-    command: sleep infinity
-    volumes:
-      - ../../:/workspace:cached
-    networks:
-      - "\${DB_NETWORK_DEV}"
 
 volumes:
-  ${PROJECT_SLUG}_db_data:
-    name: ${PROJECT_SLUG}_db_data
+  ${PROJECT_SLUG}_data:
+    name: ${PROJECT_SLUG}_data
 
 networks:
-  \${DB_NETWORK_DEV}:
+  db_network:
     name: "\${DB_NETWORK_DEV}"
     external: true
 YAML
@@ -165,9 +156,9 @@ step "Generando docker-compose.yml prod"
 
 cat > aDespliegue/prod/docker-compose.yml <<YAML
 services:
-  ${PROJECT_SLUG}_db_prod:
+  ${PROJECT_SLUG}_prod:
     image: mysql:${MYSQL_VERSION}
-    container_name: ${PROJECT_SLUG}_db_prod
+    container_name: ${PROJECT_SLUG}_prod
     restart: unless-stopped
     env_file: .env
     environment:
@@ -178,40 +169,20 @@ services:
     ports:
       - "\${MYSQL_PORT_PROD}:3306"
     volumes:
-      - ${PROJECT_SLUG}_db_data_prod:/var/lib/mysql
+      - ${PROJECT_SLUG}_data_prod:/var/lib/mysql
     networks:
-      - "\${DB_NETWORK_PROD}"
+      - db_network
 
 volumes:
-  ${PROJECT_SLUG}_db_data_prod:
-    name: ${PROJECT_SLUG}_db_data_prod
+  ${PROJECT_SLUG}_data_prod:
+    name: ${PROJECT_SLUG}_data_prod
 
 networks:
-  \${DB_NETWORK_PROD}:
+  db_network:
     name: "\${DB_NETWORK_PROD}"
     external: true
 YAML
 
-# --- Generando .devcontainer ---
-step "Generando .devcontainer"
-
-cat > .devcontainer/devcontainer.json <<JSON
-{
-  "name": "${PROJECT_NAME} MySQL",
-  "dockerComposeFile": ["../aDespliegue/dev/docker-compose.yml"],
-  "service": "dev",
-  "workspaceFolder": "/workspace",
-  "shutdownAction": "stopCompose",
-  "customizations": {
-    "vscode": {
-      "extensions": [
-        "mtxr.sqltools",
-        "mtxr.sqltools-driver-mysql"
-      ]
-    }
-  }
-}
-JSON
 
 # --- Generando .env y .env.example ---
 step "Generando variables de entorno (.env)"
@@ -264,8 +235,8 @@ step "Generando Makefile"
 cat > Makefile <<MAKE
 .PHONY: help start stop logs sh mysql mysql-root backup restore up-dev down-dev up-prod down-prod
 
-MYSQL_SERVICE_dev = ${PROJECT_SLUG}_db_dev
-MYSQL_SERVICE_prod = ${PROJECT_SLUG}_db_prod
+MYSQL_SERVICE_dev = ${PROJECT_SLUG}_dev
+MYSQL_SERVICE_prod = ${PROJECT_SLUG}_prod
 
 help:
 	@echo "Comandos disponibles:"
@@ -396,7 +367,6 @@ echo "╚═══════════════════════�
 echo ""
 echo "  Estructura creada:"
 echo "    ${PROJECT_SLUG}/"
-echo "    ├── .devcontainer/"
 echo "    ├── aDespliegue/dev/docker-compose.yml"
 echo "    ├── aDespliegue/dev/.env"
 echo "    ├── aDespliegue/prod/docker-compose.yml"

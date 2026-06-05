@@ -108,7 +108,6 @@ step "Creando estructura de directorios"
 mkdir -p "$PROJECT_SLUG"
 cd "$PROJECT_SLUG"
 
-mkdir -p .devcontainer
 mkdir -p aDespliegue/dev
 mkdir -p aDespliegue/prod
 
@@ -117,14 +116,14 @@ step "Generando docker-compose.yml dev"
 
 cat > aDespliegue/dev/docker-compose.yml <<YAML
 services:
-  ${PROJECT_SLUG}_pma_dev:
+  ${PROJECT_SLUG}_dev:
     image: phpmyadmin:latest
-    container_name: ${PROJECT_SLUG}_pma_dev
+    container_name: ${PROJECT_SLUG}_dev
     restart: "no"
     env_file: .env
     environment:
       PMA_HOST: "\${PMA_HOST}"
-      PMA_PORT: "\${PMA_DB_PORT_DEV}"
+      PMA_PORT: "\${PMA_DB_PORT}"
       PMA_ARBITRARY: "\${PMA_ARBITRARY}"
       PMA_ABSOLUTE_URI: "http://localhost:\${PMA_PORT_DEV}/"
     ports:
@@ -132,19 +131,10 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
-      - "\${DB_NETWORK_DEV}"
-
-  dev:
-    image: mcr.microsoft.com/devcontainers/base:debian
-    container_name: ${PROJECT_SLUG}_dev
-    command: sleep infinity
-    volumes:
-      - ../../:/workspace:cached
-    networks:
-      - "\${DB_NETWORK_DEV}"
+      - db_network
 
 networks:
-  \${DB_NETWORK_DEV}:
+  db_network:
     name: "\${DB_NETWORK_DEV}"
     external: true
 YAML
@@ -154,14 +144,14 @@ step "Generando docker-compose.yml prod"
 
 cat > aDespliegue/prod/docker-compose.yml <<YAML
 services:
-  ${PROJECT_SLUG}_pma_prod:
+  ${PROJECT_SLUG}_prod:
     image: phpmyadmin:latest
-    container_name: ${PROJECT_SLUG}_pma_prod
+    container_name: ${PROJECT_SLUG}_prod
     restart: unless-stopped
     env_file: .env
     environment:
       PMA_HOST: "\${PMA_HOST}"
-      PMA_PORT: "\${PMA_DB_PORT_PROD}"
+      PMA_PORT: "\${PMA_DB_PORT}"
       PMA_ARBITRARY: "\${PMA_ARBITRARY}"
       PMA_ABSOLUTE_URI: "http://localhost:\${PMA_PORT_PROD}/"
     ports:
@@ -169,31 +159,18 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
-      - "\${DB_NETWORK_PROD}"
+      - db_network
 
 networks:
-  \${DB_NETWORK_PROD}:
+  db_network:
     name: "\${DB_NETWORK_PROD}"
     external: true
 YAML
 
-# --- Generando .devcontainer ---
-step "Generando .devcontainer"
-
-cat > .devcontainer/devcontainer.json <<JSON
-{
-  "name": "${PROJECT_NAME} phpMyAdmin",
-  "dockerComposeFile": ["../aDespliegue/dev/docker-compose.yml"],
-  "service": "dev",
-  "workspaceFolder": "/workspace",
-  "shutdownAction": "stopCompose"
-}
-JSON
-
 cat > aDespliegue/dev/.env.example <<ENV
 PMA_PORT_DEV=${PMA_PORT_DEV}
 PMA_HOST=${PMA_HOST_DEV}
-PMA_DB_PORT_DEV=${PMA_DB_PORT_DEV}
+PMA_DB_PORT=${PMA_DB_PORT_DEV}
 PMA_ARBITRARY=${PMA_ARBITRARY}
 DB_NETWORK_DEV=${DB_NETWORK_DEV}
 ENV
@@ -201,7 +178,7 @@ ENV
 cat > aDespliegue/dev/.env <<ENV
 PMA_PORT_DEV=${PMA_PORT_DEV}
 PMA_HOST=${PMA_HOST_DEV}
-PMA_DB_PORT_DEV=${PMA_DB_PORT_DEV}
+PMA_DB_PORT=${PMA_DB_PORT_DEV}
 PMA_ARBITRARY=${PMA_ARBITRARY}
 DB_NETWORK_DEV=${DB_NETWORK_DEV}
 ENV
@@ -210,7 +187,7 @@ cat > aDespliegue/prod/.env.example <<ENV
 PMA_PORT_PROD=${PMA_PORT_PROD}
 PROD_SERVER_IP=
 PMA_HOST=${PMA_HOST_PROD}
-PMA_DB_PORT_PROD=${PMA_DB_PORT_PROD}
+PMA_DB_PORT=${PMA_DB_PORT_PROD}
 PMA_ARBITRARY=${PMA_ARBITRARY}
 DB_NETWORK_PROD=${DB_NETWORK_PROD}
 ENV
@@ -219,7 +196,7 @@ cat > aDespliegue/prod/.env <<ENV
 PMA_PORT_PROD=${PMA_PORT_PROD}
 PROD_SERVER_IP=${PROD_SERVER_IP}
 PMA_HOST=${PMA_HOST_PROD}
-PMA_DB_PORT_PROD=${PMA_DB_PORT_PROD}
+PMA_DB_PORT=${PMA_DB_PORT_PROD}
 PMA_ARBITRARY=${PMA_ARBITRARY}
 DB_NETWORK_PROD=${DB_NETWORK_PROD}
 ENV
@@ -230,8 +207,8 @@ step "Generando Makefile"
 cat > Makefile <<MAKE
 .PHONY: help logs sh up-dev down-dev up-prod down-prod
 
-PMA_SERVICE_dev = ${PROJECT_SLUG}_pma_dev
-PMA_SERVICE_prod = ${PROJECT_SLUG}_pma_prod
+PMA_SERVICE_dev = ${PROJECT_SLUG}_dev
+PMA_SERVICE_prod = ${PROJECT_SLUG}_prod
 
 help:
 	@echo "Comandos disponibles:"
@@ -299,7 +276,6 @@ echo "╚═══════════════════════�
 echo ""
 echo "  Estructura creada:"
 echo "    ${PROJECT_SLUG}/"
-echo "    ├── .devcontainer/"
 echo "    ├── aDespliegue/dev/docker-compose.yml"
 echo "    ├── aDespliegue/dev/.env"
 echo "    ├── aDespliegue/prod/docker-compose.yml"
