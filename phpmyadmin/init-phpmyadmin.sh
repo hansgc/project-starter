@@ -31,6 +31,27 @@ step() {
   echo "$1"
 }
 
+verificar_red_docker() {
+  local network_name=$1
+  if docker network inspect "$network_name" >/dev/null 2>&1; then
+    return 0  # La red existe
+  else
+    return 1  # La red NO existe
+  fi
+}
+
+crear_red_docker() {
+  local network_name=$1
+  echo "Creando red Docker: $network_name"
+  if docker network create "$network_name" >/dev/null 2>&1; then
+    echo "  ✓ Red '$network_name' creada exitosamente."
+    return 0
+  else
+    echo "  ❌ Error al crear la red '$network_name'."
+    return 1
+  fi
+}
+
 CONFIG_FILE="${1:-}"
 
 bool() {
@@ -46,12 +67,15 @@ if [[ -n "$CONFIG_FILE" ]]; then
   echo "Leyendo configuración desde: $CONFIG_FILE"
 
   # Cargar variables ignorando comentarios y líneas vacías
+  echo ""
   while IFS='=' read -r key value; do
     [[ "$key" =~ ^#.*$ || -z "$key" ]] && continue
     key=$(echo "$key" | tr -d ' ')
     value=$(echo "$value" | tr -d '"' | tr -d "'" | sed 's/[[:space:]]*#.*//' | xargs)
     declare "$key=$value"
+    printf "  %s=%s\n" "$key" "$value"
   done < "$CONFIG_FILE"
+  echo ""
 
   CONFIG_BASENAME=$(basename "$CONFIG_FILE" .conf)
   PROJECT_NAME=${CONFIG_BASENAME#project_}
@@ -89,6 +113,45 @@ else
 fi
 
 PROJECT_SLUG=$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')
+DB_NETWORK="${DB_NETWORK:-${PROJECT_SLUG}_net}"
+DB_NETWORK_DEV="${DB_NETWORK}_dev"
+DB_NETWORK_PROD="${DB_NETWORK}_prod"
+
+# --- Verificar redes Docker ---
+step "Verificando redes Docker"
+for network in "$DB_NETWORK_DEV" "$DB_NETWORK_PROD"; do
+  if ! verificar_red_docker "$network"; then
+    echo "  ⚠ La red Docker '$network' no existe."
+    if [[ -n "$CONFIG_FILE" ]]; then
+      # Modo archivo: crear automáticamente
+      echo "  Creando red automáticamente (modo archivo)..."
+      if crear_red_docker "$network"; then
+        echo "  ✓ Red '$network' creada."
+      else
+        echo "  ❌ No se pudo crear la red '$network'. Por favor, créala manualmente con:"
+        echo "     docker network create $network"
+        exit 1
+      fi
+    else
+      # Modo interactivo: preguntar
+      if ask_yn "¿Deseas crear la red '$network' ahora?" "s"; then
+        if crear_red_docker "$network"; then
+          echo "  ✓ Red '$network' creada."
+        else
+          echo "  ❌ No se pudo crear la red '$network'. Por favor, créala manualmente con:"
+          echo "     docker network create $network"
+          exit 1
+        fi
+      else
+        echo "  ℹ Debes crear la red manualmente antes de continuar:"
+        echo "     docker network create $network"
+        exit 1
+      fi
+    fi
+  else
+    echo "  ✓ La red '$network' existe."
+  fi
+done
 
 # --- Crear estructura de directorios ---
 step "Creando estructura de directorios"
@@ -102,32 +165,7 @@ mkdir -p aDespliegue/prod
 # --- aDespliegue/dev/docker-compose.yml ---
 step "Generando docker-compose.yml dev"
 
-if [[ -n "$DB_NETWORK" ]]; then
-  # Con red externa: phpMyAdmin se une a la red del contenedor MySQL
-  cat > aDespliegue/dev/docker-compose.yml <<YAML
-services:
-  ${PROJECT_SLUG}_pma_dev:
-    image: phpmyadmin:latest
-    container_name: ${PROJECT_SLUG}_pma_dev
-    restart: "no"
-    environment:
-      PMA_HOST: "\${PMA_HOST}"
-      PMA_PORT: "\${PMA_DB_PORT}"
-      PMA_ARBITRARY: "\${PMA_ARBITRARY}"
-      PMA_ABSOLUTE_URI: "http://localhost:\${PMA_PORT_DEV}/"
-    ports:
-      - "\${PMA_PORT_DEV}:80"
-    networks:
-      - db_external
-
-networks:
-  db_external:
-    name: ${DB_NETWORK}
-    external: true
-YAML
-else
-  # Sin red externa: usa host.docker.internal
-  cat > aDespliegue/dev/docker-compose.yml <<YAML
+cat > aDespliegue/dev/docker-compose.yml <<YAML
 services:
   ${PROJECT_SLUG}_pma_dev:
     image: phpmyadmin:latest
@@ -143,43 +181,17 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
-      - ${PROJECT_SLUG}_net
+      - ${DB_NETWORK_DEV}
 
 networks:
-  ${PROJECT_SLUG}_net:
-    name: ${PROJECT_SLUG}_net
+  ${DB_NETWORK_DEV}:
+    name: ${DB_NETWORK_DEV}
 YAML
-fi
 
 # --- aDespliegue/prod/docker-compose.yml ---
 step "Generando docker-compose.yml prod"
 
-if [[ -n "$DB_NETWORK" ]]; then
-  # Con red externa: phpMyAdmin se une a la red del contenedor MySQL
-  cat > aDespliegue/prod/docker-compose.yml <<YAML
-services:
-  ${PROJECT_SLUG}_pma_prod:
-    image: phpmyadmin:latest
-    container_name: ${PROJECT_SLUG}_pma_prod
-    restart: unless-stopped
-    environment:
-      PMA_HOST: "\${PMA_HOST}"
-      PMA_PORT: "\${PMA_DB_PORT}"
-      PMA_ARBITRARY: "\${PMA_ARBITRARY}"
-      PMA_ABSOLUTE_URI: "http://localhost:\${PMA_PORT_PROD}/"
-    ports:
-      - "\${PMA_PORT_PROD}:80"
-    networks:
-      - db_external
-
-networks:
-  db_external:
-    name: ${DB_NETWORK}
-    external: true
-YAML
-else
-  # Sin red externa: usa host.docker.internal
-  cat > aDespliegue/prod/docker-compose.yml <<YAML
+cat > aDespliegue/prod/docker-compose.yml <<YAML
 services:
   ${PROJECT_SLUG}_pma_prod:
     image: phpmyadmin:latest
@@ -195,13 +207,12 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
-      - ${PROJECT_SLUG}_prod_net
+      - ${DB_NETWORK_PROD}
 
 networks:
-  ${PROJECT_SLUG}_prod_net:
-    name: ${PROJECT_SLUG}_prod_net
+  ${DB_NETWORK_PROD}:
+    name: ${DB_NETWORK_PROD}
 YAML
-fi
 
 # --- Generando .env y .env.example ---
 step "Generando variables de entorno (.env)"
@@ -230,7 +241,7 @@ ENV
 step "Generando Makefile"
 
 cat > Makefile <<MAKE
-.PHONY: up down start stop logs sh dev-up dev-down prod-up prod-down
+.PHONY: help up down start stop logs sh dev-up dev-down prod-up prod-down
 
 ENV ?= dev
 ENV_DIR = aDespliegue/\$(ENV)
@@ -239,6 +250,20 @@ PMA_SERVICE_prod = ${PROJECT_SLUG}_pma_prod
 PMA_SERVICE = \$(PMA_SERVICE_\$(ENV))
 include .env
 export
+
+help:
+	@echo "Comandos disponibles:"
+	@echo "  make help          - Muestra esta ayuda"
+	@echo "  make up            - Levanta los contenedores (ENV=dev por defecto)"
+	@echo "  make down          - Detiene y elimina los contenedores"
+	@echo "  make start         - Levanta los contenedores (alias de up)"
+	@echo "  make stop          - Detiene los contenedores (alias de down)"
+	@echo "  make logs          - Muestra los logs en tiempo real"
+	@echo "  make sh            - Accede al shell del contenedor phpMyAdmin"
+	@echo "  make dev-up        - Levanta el ambiente de desarrollo"
+	@echo "  make dev-down      - Detiene el ambiente de desarrollo"
+	@echo "  make prod-up       - Levanta el ambiente de producción"
+	@echo "  make prod-down     - Detiene el ambiente de producción"
 
 up:
 	docker compose --env-file .env -f \$(ENV_DIR)/docker-compose.yml up -d

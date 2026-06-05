@@ -41,6 +41,27 @@ step() {
   echo "$1"
 }
 
+verificar_red_docker() {
+  local network_name=$1
+  if docker network inspect "$network_name" >/dev/null 2>&1; then
+    return 0  # La red existe
+  else
+    return 1  # La red NO existe
+  fi
+}
+
+crear_red_docker() {
+  local network_name=$1
+  echo "Creando red Docker: $network_name"
+  if docker network create "$network_name" >/dev/null 2>&1; then
+    echo "  ✓ Red '$network_name' creada exitosamente."
+    return 0
+  else
+    echo "  ❌ Error al crear la red '$network_name'."
+    return 1
+  fi
+}
+
 CONFIG_FILE="${1:-}"
 
 bool() {
@@ -132,7 +153,9 @@ if [[ -n "$CONFIG_FILE" ]]; then
     key=$(echo "$key" | tr -d ' ')
     value=$(echo "$value" | tr -d '"' | tr -d "'" | sed 's/[[:space:]]*#.*//' | xargs)
     declare "$key=$value"
+    printf "  %s=%s\n" "$key" "$value"
   done < "$CONFIG_FILE"
+  echo ""
 
   DB_HOST="${DB_HOST:-mysql}"
   DB_PORT="${DB_PORT:-3306}"
@@ -198,6 +221,46 @@ fi
 PROJECT_SLUG=$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
 PROJECT_FOLDER="${PROJECT_SLUG}-backup"
 
+DB_NETWORK="${DB_NETWORK:-app_network}"
+DB_NETWORK_DEV="${DB_NETWORK}_dev"
+DB_NETWORK_PROD="${DB_NETWORK}_prod"
+
+# --- Verificar redes Docker ---
+step "Verificando redes Docker"
+for network in "$DB_NETWORK_DEV" "$DB_NETWORK_PROD"; do
+  if ! verificar_red_docker "$network"; then
+    echo "  ⚠ La red Docker '$network' no existe."
+    if [[ -n "$CONFIG_FILE" ]]; then
+      # Modo archivo: crear automáticamente
+      echo "  Creando red automáticamente (modo archivo)..."
+      if crear_red_docker "$network"; then
+        echo "  ✓ Red '$network' creada."
+      else
+        echo "  ❌ No se pudo crear la red '$network'. Por favor, créala manualmente con:"
+        echo "     docker network create $network"
+        exit 1
+      fi
+    else
+      # Modo interactivo: preguntar
+      if ask_yn "¿Deseas crear la red '$network' ahora?" "s"; then
+        if crear_red_docker "$network"; then
+          echo "  ✓ Red '$network' creada."
+        else
+          echo "  ❌ No se pudo crear la red '$network'. Por favor, créala manualmente con:"
+          echo "     docker network create $network"
+          exit 1
+        fi
+      else
+        echo "  ℹ Debes crear la red manualmente antes de continuar:"
+        echo "     docker network create $network"
+        exit 1
+      fi
+    fi
+  else
+    echo "  ✓ La red '$network' existe."
+  fi
+done
+
 step "Creando estructura de directorios"
 
 mkdir -p "$PROJECT_FOLDER"
@@ -255,14 +318,14 @@ services:
       - ../../:/workspace:cached
       - backup_data:/backups
     networks:
-      - ${DB_NETWORK}
+      - ${DB_NETWORK_DEV}
 
 volumes:
   backup_data:
 
 networks:
-  ${DB_NETWORK}:
-    external: true
+  ${DB_NETWORK_DEV}:
+    name: ${DB_NETWORK_DEV}
 YAML
 
 step "Generando Dockerfile prod"
@@ -309,14 +372,14 @@ services:
     volumes:
       - backup_data_prod:/backups
     networks:
-      - ${DB_NETWORK}
+      - ${DB_NETWORK_PROD}
 
 volumes:
   backup_data_prod:
 
 networks:
-  ${DB_NETWORK}:
-    external: true
+  ${DB_NETWORK_PROD}:
+    name: ${DB_NETWORK_PROD}
 YAML
 
 step "Generando .devcontainer"
@@ -590,58 +653,78 @@ chmod +x app/backup.sh
 step "Generando Makefile"
 
 cat > Makefile <<'MAKE'
-.PHONY: up down start stop logs logs-backup sh backup-now backup-logs dev-up dev-down prod-up prod-down build dev-build prod-build
+.PHONY: help up down start stop logs logs-backup sh backup-now backup-logs dev-up dev-down prod-up prod-down build dev-build prod-build
 
 ENV ?= dev
-ENV_DIR = aDespliegue/$(ENV)
+ENV_DIR = aDespliegue/\$(ENV)
 include .env
 export
 
+help:
+	@echo "Comandos disponibles:"
+	@echo "  make help          - Muestra esta ayuda"
+	@echo "  make up            - Levanta los contenedores (ENV=dev por defecto)"
+	@echo "  make down          - Detiene y elimina los contenedores"
+	@echo "  make build         - Reconstruye las imágenes Docker"
+	@echo "  make start         - Levanta los contenedores (alias de up)"
+	@echo "  make stop          - Detiene los contenedores (alias de down)"
+	@echo "  make logs          - Muestra los logs en tiempo real"
+	@echo "  make logs-backup   - Muestra los logs del servicio backup"
+	@echo "  make sh            - Accede al shell del contenedor backup"
+	@echo "  make backup-now    - Ejecuta un backup inmediato"
+	@echo "  make backup-logs   - Muestra los logs de backup del contenedor"
+	@echo "  make dev-up        - Levanta el ambiente de desarrollo"
+	@echo "  make dev-down      - Detiene el ambiente de desarrollo"
+	@echo "  make dev-build     - Reconstruye el ambiente de desarrollo"
+	@echo "  make prod-up       - Levanta el ambiente de producción"
+	@echo "  make prod-down     - Detiene el ambiente de producción"
+	@echo "  make prod-build    - Reconstruye el ambiente de producción"
+
 up:
-	docker compose --env-file .env -f $(ENV_DIR)/docker-compose.yml up -d
+	docker compose --env-file .env -f \$(ENV_DIR)/docker-compose.yml up -d
 
 down:
-	docker compose --env-file .env -f $(ENV_DIR)/docker-compose.yml down
+	docker compose --env-file .env -f \$(ENV_DIR)/docker-compose.yml down
 
 build:
-	docker compose --env-file .env -f $(ENV_DIR)/docker-compose.yml build --no-cache
+	docker compose --env-file .env -f \$(ENV_DIR)/docker-compose.yml build --no-cache
 
 start: up
 
 stop: down
 
 logs:
-	docker compose --env-file .env -f $(ENV_DIR)/docker-compose.yml logs -f
+	docker compose --env-file .env -f \$(ENV_DIR)/docker-compose.yml logs -f
 
 logs-backup:
-	docker compose --env-file .env -f $(ENV_DIR)/docker-compose.yml logs -f backup
+	docker compose --env-file .env -f \$(ENV_DIR)/docker-compose.yml logs -f backup
 
 sh:
-	docker compose --env-file .env -f $(ENV_DIR)/docker-compose.yml exec backup bash
+	docker compose --env-file .env -f \$(ENV_DIR)/docker-compose.yml exec backup bash
 
 backup-now:
-	docker compose --env-file .env -f $(ENV_DIR)/docker-compose.yml exec backup /usr/local/bin/backup.sh
+	docker compose --env-file .env -f \$(ENV_DIR)/docker-compose.yml exec backup /usr/local/bin/backup.sh
 
 backup-logs:
-	docker compose --env-file .env -f $(ENV_DIR)/docker-compose.yml exec backup tail -f /var/log/backup.log
+	docker compose --env-file .env -f \$(ENV_DIR)/docker-compose.yml exec backup tail -f /var/log/backup.log
 
 dev-up:
-	$(MAKE) up ENV=dev
+	\$(MAKE) up ENV=dev
 
 dev-down:
-	$(MAKE) down ENV=dev
+	\$(MAKE) down ENV=dev
 
 dev-build:
-	$(MAKE) build ENV=dev
+	\$(MAKE) build ENV=dev
 
 prod-up:
-	$(MAKE) up ENV=prod
+	\$(MAKE) up ENV=prod
 
 prod-down:
-	$(MAKE) down ENV=prod
+	\$(MAKE) down ENV=prod
 
 prod-build:
-	$(MAKE) build ENV=prod
+	\$(MAKE) build ENV=prod
 MAKE
 
 step "Generando README.md"
