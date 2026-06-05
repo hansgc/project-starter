@@ -87,8 +87,8 @@ probar_backblaze_b2() {
 }
 
 probar_mysql_network() {
-  if [[ -z "$DB_NETWORK" ]]; then
-    echo "ERROR: DB_NETWORK no está definido. No se puede verificar la red Docker de MySQL."
+  if [[ -z "$DB_NETWORK_DEV" ]]; then
+    echo "ERROR: DB_NETWORK_DEV no está definido. No se puede verificar la red Docker de MySQL de desarrollo."
     return 1
   fi
 
@@ -97,21 +97,21 @@ probar_mysql_network() {
     return 1
   fi
 
-  if ! docker network inspect "$DB_NETWORK" >/dev/null 2>&1; then
-    echo "ERROR: La red Docker '$DB_NETWORK' no existe."
+  if ! docker network inspect "$DB_NETWORK_DEV" >/dev/null 2>&1; then
+    echo "ERROR: La red Docker de desarrollo '$DB_NETWORK_DEV' no existe."
     echo "Verificá que el contenedor MySQL esté en esa red."
     return 1
   fi
 
-  echo "Verificando conexión a MySQL desde la red Docker '$DB_NETWORK'..."
-  if ! docker run --rm --network "$DB_NETWORK" --entrypoint mysqladmin mysql:8.0 \
-      ping -h"$DB_HOST" -P"$DB_PORT_DEV" -u"$DB_USER" -p"$DB_PASS" --silent >/dev/null 2>&1; then
-    echo "ERROR: No se pudo conectar a MySQL desde la red Docker '$DB_NETWORK'."
-    echo "Revisá que el contenedor MySQL esté levantado y que DB_HOST/DB_PORT_DEV sean correctos."
+  echo "Verificando conexión a MySQL desde la red Docker '$DB_NETWORK_DEV'..."
+  if ! docker run --rm --network "$DB_NETWORK_DEV" --entrypoint mysqladmin mysql:8.0 \
+      ping -h"$DB_HOST_DEV" -P"$DB_PORT_DEV" -u"$DB_USER_DEV" -p"$DB_PASS_DEV" --silent >/dev/null 2>&1; then
+    echo "ERROR: No se pudo conectar a MySQL desde la red Docker '$DB_NETWORK_DEV'."
+    echo "Revisá que el contenedor MySQL esté levantado y que DB_HOST_DEV/DB_PORT_DEV sean correctos."
     return 1
   fi
 
-  echo "Conexión a MySQL verificada en la red Docker '$DB_NETWORK'."
+  echo "Conexión a MySQL verificada en la red Docker '$DB_NETWORK_DEV'."
   return 0
 }
 
@@ -142,13 +142,32 @@ if [[ -n "$CONFIG_FILE" ]]; then
   echo ""
 
   DB_HOST="${DB_HOST:-mysql}"
+  DB_HOST_DEV="${DB_HOST_DEV:-${DB_HOST}}"
+  DB_HOST_PROD="${DB_HOST_PROD:-${DB_HOST}}"
   DB_PORT_DEV="${DB_PORT_DEV:-3306}"
   DB_PORT_PROD="${DB_PORT_PROD:-3306}"
   DB_NAME="${DB_NAME:-app_db}"
+  DB_NAME_DEV="${DB_NAME_DEV:-${DB_NAME}}"
+  DB_NAME_PROD="${DB_NAME_PROD:-${DB_NAME}}"
   DB_USER="${DB_USER:-app_user}"
+  DB_USER_DEV="${DB_USER_DEV:-${DB_USER}}"
+  DB_USER_PROD="${DB_USER_PROD:-${DB_USER}}"
   DB_PASS="${DB_PASS:-secret_password}"
+  DB_PASS_DEV="${DB_PASS_DEV:-${DB_PASS}}"
+  DB_PASS_PROD="${DB_PASS_PROD:-${DB_PASS}}"
   CLIENTE_ID="${CLIENTE_ID:-mi-cliente}"
   DB_NETWORK="${DB_NETWORK:-app_network}"
+  DB_NETWORK_DEV="${DB_NETWORK_DEV:-}"
+  DB_NETWORK_PROD="${DB_NETWORK_PROD:-}"
+
+  PROJECT_SLUG=$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
+  PROJECT_FOLDER="${PROJECT_SLUG}-backup"
+
+  # Si no se definieron directamente, calcularlas desde DB_NETWORK
+  DB_NETWORK="${DB_NETWORK:-app_network}"
+  DB_NETWORK_DEV="${DB_NETWORK_DEV:-${DB_NETWORK}_dev}"
+  DB_NETWORK_PROD="${DB_NETWORK_PROD:-${DB_NETWORK}_prod}"
+
   B2_KEY_ID="${B2_KEY_ID:-}"
   B2_APP_KEY="${B2_APP_KEY:-}"
   B2_BUCKET="${B2_BUCKET:-backup-cliente}"
@@ -170,13 +189,6 @@ if ! probar_backblaze_b2; then
   echo "ERROR: No se puede continuar sin una conexión funcional a Backblaze B2."
   exit 1
 fi
-
-PROJECT_SLUG=$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
-PROJECT_FOLDER="${PROJECT_SLUG}-backup"
-
-DB_NETWORK="${DB_NETWORK:-app_network}"
-DB_NETWORK_DEV="${DB_NETWORK}_dev"
-DB_NETWORK_PROD="${DB_NETWORK}_prod"
 
 # --- Verificar redes Docker ---
 step "Verificando redes Docker"
@@ -344,10 +356,10 @@ step "Generando variables de entorno (.env)"
 cat > aDespliegue/dev/.env.example <<ENV
 # Configuración de MySQL
 # Aquí puedes usar el nombre del contenedor MySQL dentro de la red Docker compartida.
-DB_HOST=${DB_HOST}
+DB_HOST=${DB_HOST_DEV}
 DB_PORT_DEV=${DB_PORT_DEV}
-DB_NAME=${DB_NAME}
-DB_USER=${DB_USER}
+DB_NAME=${DB_NAME_DEV}
+DB_USER=${DB_USER_DEV}
 DB_PASS=YOUR_DB_PASSWORD
 
 # Red Docker donde está el contenedor MySQL
@@ -370,11 +382,11 @@ ENV
 
 cat > aDespliegue/dev/.env <<ENV
 # Configuración de MySQL
-DB_HOST=${DB_HOST}
+DB_HOST=${DB_HOST_DEV}
 DB_PORT_DEV=${DB_PORT_DEV}
-DB_NAME=${DB_NAME}
-DB_USER=${DB_USER}
-DB_PASS=${DB_PASS}
+DB_NAME=${DB_NAME_DEV}
+DB_USER=${DB_USER_DEV}
+DB_PASS=${DB_PASS_DEV}
 
 # Red Docker donde está el contenedor MySQL
 DB_NETWORK_DEV=${DB_NETWORK_DEV}
@@ -397,10 +409,10 @@ ENV
 cat > aDespliegue/prod/.env.example <<ENV
 # Configuración de MySQL
 # Aquí puedes usar el nombre del contenedor MySQL dentro de la red Docker compartida.
-DB_HOST=${DB_HOST}
+DB_HOST=${DB_HOST_PROD}
 DB_PORT_PROD=${DB_PORT_PROD}
-DB_NAME=${DB_NAME}
-DB_USER=${DB_USER}
+DB_NAME=${DB_NAME_PROD}
+DB_USER=${DB_USER_PROD}
 DB_PASS=YOUR_DB_PASSWORD
 
 # Red Docker donde está el contenedor MySQL
@@ -426,11 +438,11 @@ ENV
 
 cat > aDespliegue/prod/.env <<ENV
 # Configuración de MySQL
-DB_HOST=${DB_HOST}
+DB_HOST=${DB_HOST_PROD}
 DB_PORT_PROD=${DB_PORT_PROD}
-DB_NAME=${DB_NAME}
-DB_USER=${DB_USER}
-DB_PASS=${DB_PASS}
+DB_NAME=${DB_NAME_PROD}
+DB_USER=${DB_USER_PROD}
+DB_PASS=${DB_PASS_PROD}
 
 # Red Docker donde está el contenedor MySQL
 DB_NETWORK_PROD=${DB_NETWORK_PROD}
