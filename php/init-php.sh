@@ -40,22 +40,6 @@ escape_symfony_env_percents() {
   echo "${1//%/%%}"
 }
 
-ask_yn() {
-  local label=$1
-  local default=${2:-n}
-  local hint=$([ "$default" = "s" ] && echo "[S/n]" || echo "[s/N]")
-  read -p "  $label $hint: " ans
-  ans=${ans:-$default}
-  [[ "$ans" =~ ^[sS]$ ]]
-}
-
-ask_input() {
-  local label=$1
-  local default=$2
-  read -p "$label [default: $default]: " val
-  echo "${val:-$default}"
-}
-
 step() {
   echo ""
   echo "$1"
@@ -251,10 +235,6 @@ PROD_NGINX_SERVICE="${PROJECT_SLUG}-nginx-prod"
 PROD_NGINX_NAME="${PROJECT_SLUG}-nginx-prod"
 DEV_NETWORK_NAME="${PROJECT_SLUG}-php-dev_net"
 PROD_NETWORK_NAME="${PROJECT_SLUG}-php-prod_net"
-CONFIRM=s
-# -----------------------------------------------------------------------------
-# 2. Resumen (siempre se muestra, con confirmación solo en modo interactivo)
-  [[ "$CONFIRM" =~ ^[sS]$ ]] || { echo "Cancelado."; exit 0; }
 
 # -----------------------------------------------------------------------------
 # 3. Validar base de datos antes de crear directorios
@@ -745,145 +725,162 @@ fi
 step "Generando Makefile"
 
 cat > Makefile <<MAKE
-.PHONY: up down build serve start stop sh cc logs logs-symfony ps migrate migration jwt-keys dev-up dev-down dev-build prod-up prod-down prod-build
+.PHONY: help serve stop sh cc logs logs-symfony ps migrate migration jwt-keys up-dev down-dev build-dev up-prod down-prod build-prod
 
-ENV ?= dev
-ENV_DIR = aDespliegue/\$(ENV)
 PHP_SERVICE_dev = ${DEV_PHP_SERVICE}
 PHP_SERVICE_prod = ${PROD_PHP_SERVICE}
-PHP_SERVICE = \$(PHP_SERVICE_\$(ENV))
 APP_DIR_dev = /workspace/app
 APP_DIR_prod = /workspace
-APP_DIR = \$(APP_DIR_\$(ENV))
-RUN_PHP = docker compose -f \$(ENV_DIR)/docker-compose.yml exec -w \$(APP_DIR) \$(PHP_SERVICE)
+include .env
+export
 
-up:
-	docker compose -f \$(ENV_DIR)/docker-compose.yml up -d
+help:
+	@echo "Comandos disponibles:"
+	@echo "  make help             - Muestra esta ayuda"
+	@echo "  make up-{dev|prod}    - Levanta el ambiente de desarrollo/producción"
+	@echo "  make down-{dev|prod}  - Detiene el ambiente de desarrollo/producción"
+	@echo "  make build-{dev|prod} - Reconstruye el ambiente de desarrollo/producción"
+	@echo "  make serve            - Inicia el servidor Symfony (solo dev)"
+	@echo "  make stop             - Detiene el servidor Symfony (solo dev)"
+	@echo "  make sh-{dev|prod}    - Accede al shell del contenedor PHP"
+	@echo "  make cc-{dev|prod}    - Limpia el cache de Symfony"
+	@echo "  make logs-{dev|prod}  - Muestra los logs de Docker"
+	@echo "  make logs-symfony     - Muestra los logs del servidor Symfony (dev)"
+	@echo "  make ps-{dev|prod}    - Muestra el estado de los contenedores"
 
-down:
-	@if [ "\$(ENV)" = "dev" ]; then \$(RUN_PHP) symfony server:stop 2>/dev/null || true; fi
-	docker compose -f \$(ENV_DIR)/docker-compose.yml down
+up-dev:
+	docker compose -f aDespliegue/dev/docker-compose.yml up -d
 
-build:
-	docker compose -f \$(ENV_DIR)/docker-compose.yml build --no-cache
+down-dev:
+	docker compose -f aDespliegue/dev/docker-compose.yml down
+
+build-dev:
+	docker compose -f aDespliegue/dev/docker-compose.yml build --no-cache
+
+up-prod:
+	docker compose -f aDespliegue/prod/docker-compose.yml up -d
+
+down-prod:
+	docker compose -f aDespliegue/prod/docker-compose.yml down
+
+build-prod:
+	docker compose -f aDespliegue/prod/docker-compose.yml build --no-cache
 
 serve:
-	@test "\$(ENV)" = "dev" || (echo "serve solo aplica para ENV=dev"; exit 1)
-	\$(RUN_PHP) symfony server:start --no-tls --port=8000 --daemon
+	docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE} symfony server:start --no-tls --port=8000 --daemon
 
 stop:
-	@test "\$(ENV)" = "dev" || (echo "stop solo aplica para ENV=dev"; exit 1)
-	\$(RUN_PHP) symfony server:stop
+	docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE} symfony server:stop 2>/dev/null || true
 
-start: up
-	@if [ "\$(ENV)" = "dev" ]; then \$(MAKE) serve; fi
+sh-dev:
+	docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE} bash
 
-sh:
-	\$(RUN_PHP) bash
+sh-prod:
+	docker compose -f aDespliegue/prod/docker-compose.yml exec -w /workspace ${PROD_PHP_SERVICE} bash
 
-cc:
-	\$(RUN_PHP) php bin/console cache:clear
+cc-dev:
+	docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE} php bin/console cache:clear
 
-logs:
-	docker compose -f \$(ENV_DIR)/docker-compose.yml logs -f
+cc-prod:
+	docker compose -f aDespliegue/prod/docker-compose.yml exec -w /workspace ${PROD_PHP_SERVICE} php bin/console cache:clear
+
+logs-dev:
+	docker compose -f aDespliegue/dev/docker-compose.yml logs -f
+
+logs-prod:
+	docker compose -f aDespliegue/prod/docker-compose.yml logs -f
 
 logs-symfony:
-	\$(RUN_PHP) symfony server:log
+	docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE} symfony server:log
 
-ps:
-	docker compose -f \$(ENV_DIR)/docker-compose.yml ps
+ps-dev:
+	docker compose -f aDespliegue/dev/docker-compose.yml ps
 
-dev-up:
-	\$(MAKE) up ENV=dev
-
-dev-down:
-	\$(MAKE) down ENV=dev
-
-dev-build:
-	\$(MAKE) build ENV=dev
+ps-prod:
+	docker compose -f aDespliegue/prod/docker-compose.yml ps
 
 MAKE
 
 [[ -n "${DB_HOST:-}" ]] && cat >> Makefile <<MAKE
-migrate:
-	\$(RUN_PHP) php bin/console doctrine:migrations:migrate --no-interaction
+migrate-dev:
+	docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE} php bin/console doctrine:migrations:migrate --no-interaction
 
-migration:
-	\$(RUN_PHP) php bin/console make:migration
+migrate-prod:
+	docker compose -f aDespliegue/prod/docker-compose.yml exec -w /workspace ${PROD_PHP_SERVICE} php bin/console doctrine:migrations:migrate --no-interaction
+
+migration-dev:
+	docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE} php bin/console make:migration
+
+migration-prod:
+	docker compose -f aDespliegue/prod/docker-compose.yml exec -w /workspace ${PROD_PHP_SERVICE} php bin/console make:migration
 
 MAKE
 
 $USE_JWT && cat >> Makefile <<MAKE
-jwt-keys:
-	\$(RUN_PHP) php bin/console lexik:jwt:generate-keypair
+jwt-keys-dev:
+	docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE} php bin/console lexik:jwt:generate-keypair
 
-MAKE
-
-cat >> Makefile <<MAKE
-prod-build:
-	\$(MAKE) build ENV=prod
-
-prod-up:
-	\$(MAKE) up ENV=prod
-
-prod-down:
-	\$(MAKE) down ENV=prod
+jwt-keys-prod:
+	docker compose -f aDespliegue/prod/docker-compose.yml exec -w /workspace ${PROD_PHP_SERVICE} php bin/console lexik:jwt:generate-keypair
 
 MAKE
 
 if ! $USE_SYMFONY; then
   cat > Makefile <<MAKE
-.PHONY: up down build start stop sh logs ps dev-up dev-down dev-build prod-up prod-down prod-build
+.PHONY: help sh logs ps up-dev down-dev build-dev up-prod down-prod build-prod
 
-ENV ?= dev
-ENV_DIR = aDespliegue/\$(ENV)
 PHP_SERVICE_dev = ${DEV_PHP_SERVICE}
 PHP_SERVICE_prod = ${PROD_PHP_SERVICE}
-PHP_SERVICE = \$(PHP_SERVICE_\$(ENV))
 APP_DIR_dev = /workspace/app
 APP_DIR_prod = /workspace
-APP_DIR = \$(APP_DIR_\$(ENV))
-RUN_PHP = docker compose -f \$(ENV_DIR)/docker-compose.yml exec -w \$(APP_DIR) \$(PHP_SERVICE)
+include .env
+export
 
-up:
-	docker compose -f \$(ENV_DIR)/docker-compose.yml up -d
+help:
+	@echo "Comandos disponibles:"
+	@echo "  make help             - Muestra esta ayuda"
+	@echo "  make up-{dev|prod}    - Levanta el ambiente de desarrollo/producción"
+	@echo "  make down-{dev|prod}  - Detiene el ambiente de desarrollo/producción"
+	@echo "  make build-{dev|prod} - Reconstruye el ambiente de desarrollo/producción"
+	@echo "  make sh-{dev|prod}    - Accede al shell del contenedor PHP"
+	@echo "  make logs-{dev|prod}  - Muestra los logs de Docker"
+	@echo "  make ps-{dev|prod}    - Muestra el estado de los contenedores"
 
-down:
-	docker compose -f \$(ENV_DIR)/docker-compose.yml down
+up-dev:
+	docker compose -f aDespliegue/dev/docker-compose.yml up -d
 
-build:
-	docker compose -f \$(ENV_DIR)/docker-compose.yml build --no-cache
+down-dev:
+	docker compose -f aDespliegue/dev/docker-compose.yml down
 
-start: up
+build-dev:
+	docker compose -f aDespliegue/dev/docker-compose.yml build --no-cache
 
-stop: down
+up-prod:
+	docker compose -f aDespliegue/prod/docker-compose.yml up -d
 
-sh:
-	\$(RUN_PHP) bash
+down-prod:
+	docker compose -f aDespliegue/prod/docker-compose.yml down
 
-logs:
-	docker compose -f \$(ENV_DIR)/docker-compose.yml logs -f
+build-prod:
+	docker compose -f aDespliegue/prod/docker-compose.yml build --no-cache
 
-ps:
-	docker compose -f \$(ENV_DIR)/docker-compose.yml ps
+sh-dev:
+	docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE} bash
 
-dev-up:
-	\$(MAKE) up ENV=dev
+sh-prod:
+	docker compose -f aDespliegue/prod/docker-compose.yml exec -w /workspace ${PROD_PHP_SERVICE} bash
 
-dev-down:
-	\$(MAKE) down ENV=dev
+logs-dev:
+	docker compose -f aDespliegue/dev/docker-compose.yml logs -f
 
-dev-build:
-	\$(MAKE) build ENV=dev
+logs-prod:
+	docker compose -f aDespliegue/prod/docker-compose.yml logs -f
 
-prod-build:
-	\$(MAKE) build ENV=prod
+ps-dev:
+	docker compose -f aDespliegue/dev/docker-compose.yml ps
 
-prod-up:
-	\$(MAKE) up ENV=prod
-
-prod-down:
-	\$(MAKE) down ENV=prod
+ps-prod:
+	docker compose -f aDespliegue/prod/docker-compose.yml ps
 
 MAKE
 fi
@@ -1312,7 +1309,7 @@ else
   echo "    make sh        → bash en el contenedor PHP"
   echo "    make logs      → ver logs de Docker"
 fi
-echo "    make prod-up   → levantar entorno prod (Nginx)"
+echo "    make up-prod   → levantar entorno prod (Nginx)"
 echo ""
 echo "  En VSCode: Dev Containers: Reopen in Container"
 echo ""

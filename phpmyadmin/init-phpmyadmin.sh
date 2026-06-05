@@ -8,24 +8,6 @@ echo "║     phpMyAdmin Project Initializer       ║"
 echo "╚══════════════════════════════════════════╝"
 echo ""
 
-# Helper to ask Y/N questions
-ask_yn() {
-  local label=$1
-  local default=${2:-n}
-  local hint=$([ "$default" = "s" ] && echo "[S/n]" || echo "[s/N]")
-  read -p "  $label $hint: " ans
-  ans=${ans:-$default}
-  [[ "$ans" =~ ^[sS]$ ]]
-}
-
-# Helper to ask text input
-ask_input() {
-  local label=$1
-  local default=$2
-  read -p "$label [default: $default]: " val
-  echo "${val:-$default}"
-}
-
 step() {
   echo ""
   echo "$1"
@@ -91,27 +73,6 @@ if [[ -n "$CONFIG_FILE" ]]; then
   PMA_ARBITRARY="${PMA_ARBITRARY:-1}"
   DB_NETWORK="${DB_NETWORK:-}"
 
-else
-  # --- Modo interactivo ---
-  echo "Tip: podés crear un archivo .conf y correr: init-phpmyadmin.sh mi-proyecto.conf"
-  echo ""
-
-  read -p "Nombre del proyecto: " PROJECT_NAME
-  if [[ -z "$PROJECT_NAME" ]]; then
-    echo "Error: el nombre no puede estar vacío."; exit 1
-  fi
-
-  PMA_PORT_DEV=$(ask_input "Puerto local dev para acceder al panel web" "8081")
-  PMA_PORT_PROD=$(ask_input "Puerto local prod para acceder al panel web" "80")
-  PROD_SERVER_IP=$(ask_input "IP servidor producción" "")
-  PMA_HOST=$(ask_input "Host de la base de datos MySQL (ej: host.docker.internal o nombre-contenedor)" "host.docker.internal")
-  PMA_DB_PORT=$(ask_input "Puerto de la base de datos MySQL" "3306")
-  DB_NETWORK=$(ask_input "Red Docker externa a unirse (dejar vacío para usar host.docker.internal)" "")
-
-  PMA_ARBITRARY=0
-  ask_yn "Permitir ingresar cualquier Host en la pantalla de login?" "s" && PMA_ARBITRARY=1
-fi
-
 PROJECT_SLUG=$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')
 DB_NETWORK="${DB_NETWORK:-${PROJECT_SLUG}_net}"
 DB_NETWORK_DEV="${DB_NETWORK}_dev"
@@ -122,31 +83,13 @@ step "Verificando redes Docker"
 for network in "$DB_NETWORK_DEV" "$DB_NETWORK_PROD"; do
   if ! verificar_red_docker "$network"; then
     echo "  ⚠ La red Docker '$network' no existe."
-    if [[ -n "$CONFIG_FILE" ]]; then
-      # Modo archivo: crear automáticamente
-      echo "  Creando red automáticamente (modo archivo)..."
-      if crear_red_docker "$network"; then
-        echo "  ✓ Red '$network' creada."
-      else
-        echo "  ❌ No se pudo crear la red '$network'. Por favor, créala manualmente con:"
-        echo "     docker network create $network"
-        exit 1
-      fi
+    echo "  Creando red automáticamente..."
+    if crear_red_docker "$network"; then
+      echo "  ✓ Red '$network' creada."
     else
-      # Modo interactivo: preguntar
-      if ask_yn "¿Deseas crear la red '$network' ahora?" "s"; then
-        if crear_red_docker "$network"; then
-          echo "  ✓ Red '$network' creada."
-        else
-          echo "  ❌ No se pudo crear la red '$network'. Por favor, créala manualmente con:"
-          echo "     docker network create $network"
-          exit 1
-        fi
-      else
-        echo "  ℹ Debes crear la red manualmente antes de continuar:"
-        echo "     docker network create $network"
-        exit 1
-      fi
+      echo "  ❌ No se pudo crear la red '$network'. Por favor, créala manualmente con:"
+      echo "     docker network create $network"
+      exit 1
     fi
   else
     echo "  ✓ La red '$network' existe."
@@ -186,6 +129,7 @@ services:
 networks:
   ${DB_NETWORK_DEV}:
     name: ${DB_NETWORK_DEV}
+    external: true
 YAML
 
 # --- aDespliegue/prod/docker-compose.yml ---
@@ -211,6 +155,7 @@ services:
 
 networks:
   ${DB_NETWORK_PROD}:
+    external: true
     name: ${DB_NETWORK_PROD}
 YAML
 
@@ -241,57 +186,44 @@ ENV
 step "Generando Makefile"
 
 cat > Makefile <<MAKE
-.PHONY: help up down start stop logs sh dev-up dev-down prod-up prod-down
+.PHONY: help logs sh up-dev down-dev up-prod down-prod
 
-ENV ?= dev
-ENV_DIR = aDespliegue/\$(ENV)
 PMA_SERVICE_dev = ${PROJECT_SLUG}_pma_dev
 PMA_SERVICE_prod = ${PROJECT_SLUG}_pma_prod
-PMA_SERVICE = \$(PMA_SERVICE_\$(ENV))
 include .env
 export
 
 help:
 	@echo "Comandos disponibles:"
-	@echo "  make help          - Muestra esta ayuda"
-	@echo "  make up            - Levanta los contenedores (ENV=dev por defecto)"
-	@echo "  make down          - Detiene y elimina los contenedores"
-	@echo "  make start         - Levanta los contenedores (alias de up)"
-	@echo "  make stop          - Detiene los contenedores (alias de down)"
-	@echo "  make logs          - Muestra los logs en tiempo real"
-	@echo "  make sh            - Accede al shell del contenedor phpMyAdmin"
-	@echo "  make dev-up        - Levanta el ambiente de desarrollo"
-	@echo "  make dev-down      - Detiene el ambiente de desarrollo"
-	@echo "  make prod-up       - Levanta el ambiente de producción"
-	@echo "  make prod-down     - Detiene el ambiente de producción"
+	@echo "  make help             - Muestra esta ayuda"
+	@echo "  make up-{dev|prod}    - Levanta el ambiente de desarrollo/producción"
+	@echo "  make down-{dev|prod}  - Detiene el ambiente de desarrollo/producción"
+	@echo "  make logs-{dev|prod}  - Muestra los logs en tiempo real"
+	@echo "  make sh-{dev|prod}    - Accede al shell del contenedor phpMyAdmin"
 
-up:
-	docker compose --env-file .env -f \$(ENV_DIR)/docker-compose.yml up -d
+up-dev:
+	docker compose --env-file .env -f aDespliegue/dev/docker-compose.yml up -d
 
-down:
-	docker compose --env-file .env -f \$(ENV_DIR)/docker-compose.yml down
+down-dev:
+	docker compose --env-file .env -f aDespliegue/dev/docker-compose.yml down
 
-start: up
+up-prod:
+	docker compose --env-file .env -f aDespliegue/prod/docker-compose.yml up -d
 
-stop: down
+down-prod:
+	docker compose --env-file .env -f aDespliegue/prod/docker-compose.yml down
 
-logs:
-	docker compose --env-file .env -f \$(ENV_DIR)/docker-compose.yml logs -f
+logs-dev:
+	docker compose --env-file .env -f aDespliegue/dev/docker-compose.yml logs -f
 
-sh:
-	docker compose --env-file .env -f \$(ENV_DIR)/docker-compose.yml exec \$(PMA_SERVICE) sh
+logs-prod:
+	docker compose --env-file .env -f aDespliegue/prod/docker-compose.yml logs -f
 
-dev-up:
-	\$(MAKE) up ENV=dev
+sh-dev:
+	docker compose --env-file .env -f aDespliegue/dev/docker-compose.yml exec ${PMA_SERVICE_dev} sh
 
-dev-down:
-	\$(MAKE) down ENV=dev
-
-prod-up:
-	\$(MAKE) up ENV=prod
-
-prod-down:
-	\$(MAKE) down ENV=prod
+sh-prod:
+	docker compose --env-file .env -f aDespliegue/prod/docker-compose.yml exec ${PMA_SERVICE_prod} sh
 MAKE
 
 # --- Generando .gitignore ---
@@ -319,14 +251,6 @@ step "Generando leeme.txt"
   fi
 } > leeme.txt
 
-# --- Levantando el contenedor ---
-step "Levantando contenedor phpMyAdmin..."
-docker compose --env-file .env -f aDespliegue/dev/docker-compose.yml up -d
-
-# Esperar a que phpMyAdmin esté listo
-echo "Esperando que el contenedor phpMyAdmin esté listo..."
-sleep 2
-
 echo ""
 echo "╔══════════════════════════════════════════╗"
 echo "║   ✅  ${PROJECT_NAME} listo!              "
@@ -338,7 +262,12 @@ echo "    ├── aDespliegue/dev/docker-compose.yml"
 echo "    ├── aDespliegue/prod/docker-compose.yml"
 echo "    ├── Makefile"
 echo "    ├── .env"
+echo "    ├── leeme.txt"
 echo "    └── .gitignore"
+echo ""
+echo "  Para levantar el contenedor:"
+echo "    cd ${PROJECT_SLUG}"
+echo "    make up"
 echo ""
 echo "  Acceso Web:"
 echo "    URL dev:     http://localhost:${PMA_PORT_DEV}"
