@@ -69,7 +69,8 @@ if [[ -n "$CONFIG_FILE" ]]; then
   PMA_PORT_PROD="${PMA_PORT_PROD:-80}"
   PROD_SERVER_IP="${PROD_SERVER_IP:-}"
   PMA_HOST="${PMA_HOST:-host.docker.internal}"
-  PMA_DB_PORT="${PMA_DB_PORT:-3306}"
+  PMA_DB_PORT_DEV="${PMA_DB_PORT_DEV:-3306}"
+  PMA_DB_PORT_PROD="${PMA_DB_PORT_PROD:-3306}"
   PMA_ARBITRARY="${PMA_ARBITRARY:-1}"
   DB_NETWORK="${DB_NETWORK:-}"
 
@@ -116,7 +117,7 @@ services:
     restart: "no"
     environment:
       PMA_HOST: "\${PMA_HOST}"
-      PMA_PORT: "\${PMA_DB_PORT}"
+      PMA_PORT: "\${PMA_DB_PORT_DEV}"
       PMA_ARBITRARY: "\${PMA_ARBITRARY}"
       PMA_ABSOLUTE_URI: "http://localhost:\${PMA_PORT_DEV}/"
     ports:
@@ -143,7 +144,7 @@ services:
     restart: unless-stopped
     environment:
       PMA_HOST: "\${PMA_HOST}"
-      PMA_PORT: "\${PMA_DB_PORT}"
+      PMA_PORT: "\${PMA_DB_PORT_PROD}"
       PMA_ARBITRARY: "\${PMA_ARBITRARY}"
       PMA_ABSOLUTE_URI: "http://localhost:\${PMA_PORT_PROD}/"
     ports:
@@ -167,7 +168,8 @@ PMA_PORT_DEV=${PMA_PORT_DEV}
 PMA_PORT_PROD=${PMA_PORT_PROD}
 PROD_SERVER_IP=
 PMA_HOST=${PMA_HOST}
-PMA_DB_PORT=${PMA_DB_PORT}
+PMA_DB_PORT_DEV=${PMA_DB_PORT_DEV}
+PMA_DB_PORT_PROD=${PMA_DB_PORT_PROD}
 PMA_ARBITRARY=${PMA_ARBITRARY}
 DB_NETWORK=${DB_NETWORK}
 ENV
@@ -177,7 +179,8 @@ PMA_PORT_DEV=${PMA_PORT_DEV}
 PMA_PORT_PROD=${PMA_PORT_PROD}
 PROD_SERVER_IP=${PROD_SERVER_IP}
 PMA_HOST=${PMA_HOST}
-PMA_DB_PORT=${PMA_DB_PORT}
+PMA_DB_PORT_DEV=${PMA_DB_PORT_DEV}
+PMA_DB_PORT_PROD=${PMA_DB_PORT_PROD}
 PMA_ARBITRARY=${PMA_ARBITRARY}
 DB_NETWORK=${DB_NETWORK}
 ENV
@@ -276,7 +279,8 @@ echo "    Host MySQL:  ${PMA_HOST}"
 if [[ -n "$DB_NETWORK" ]]; then
   echo "    Red Docker:  ${DB_NETWORK} (externa)"
 fi
-echo "    Port MySQL:  ${PMA_DB_PORT}"
+echo "    Port MySQL dev:  ${PMA_DB_PORT_DEV}"
+echo "    Port MySQL prod: ${PMA_DB_PORT_PROD}"
 echo ""
 echo "  Comandos:"
 echo "    make up-{dev|prod}    → iniciar phpMyAdmin"

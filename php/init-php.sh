@@ -252,7 +252,7 @@ if [[ -n "${DB_HOST:-}" ]]; then
   CHECK_DB_USER="${DB_USER:-${DEFAULT_DB_USER:-app}}"
   CHECK_DB_PASSWORD="${DB_PASSWORD:-${DEFAULT_DB_PASSWORD:-secret}}"
   CHECK_DB_HOST="${DB_HOST:-${DEFAULT_DB_HOST:-host.docker.internal}}"
-  CHECK_DB_PORT="${DB_PORT:-${DEFAULT_DB_PORT:-3306}}"
+  CHECK_DB_PORT="${DB_PORT_DEV:-${DEFAULT_DB_PORT_DEV:-3306}}"
   CHECK_DB_NAME="${DB_NAME:-${PROJECT_SLUG}}"
 
   echo "Verificando base de datos antes de iniciar..."
@@ -657,7 +657,8 @@ step "Generando .env"
 APP_SECRET=$(openssl rand -hex 16)
 DEV_DB_NAME="${DB_NAME:-${PROJECT_SLUG}}"
 DEV_DB_HOST="${DB_HOST:-host.docker.internal}"
-DEV_DB_PORT="${DB_PORT:-3306}"
+DEV_DB_PORT="${DB_PORT_DEV:-3306}"
+PROD_DB_PORT="${DB_PORT_PROD:-3306}"
 DEV_DB_USER="app"
 DEV_DB_PASSWORD="secret"
 DEV_ADMIN_LOGIN="${ADMIN_LOGIN:-}"
@@ -681,7 +682,8 @@ if $USE_SYMFONY; then
 DB_USER=app
 DB_PASSWORD=secret
 DB_HOST=host.docker.internal
-DB_PORT=3306
+DB_PORT_DEV=3306
+DB_PORT_PROD=3306
 JWT_PASSPHRASE=dev_jwt_passphrase
 DEFAULTS
     echo "  ~/.symfony-defaults creado con valores de ejemplo."
@@ -700,7 +702,8 @@ DEFAULTS
   DEV_DB_USER="${DB_USER:-${DEFAULT_DB_USER:-app}}"
   DEV_DB_PASSWORD="${DB_PASSWORD:-${DEFAULT_DB_PASSWORD:-secret}}"
   DEV_DB_HOST="${DB_HOST:-${DEFAULT_DB_HOST:-host.docker.internal}}"
-  DEV_DB_PORT="${DB_PORT:-${DEFAULT_DB_PORT:-3306}}"
+  DEV_DB_PORT="${DB_PORT_DEV:-${DEFAULT_DB_PORT_DEV:-3306}}"
+  PROD_DB_PORT="${DB_PORT_PROD:-${DEFAULT_DB_PORT_PROD:-3306}}"
   DEV_ADMIN_LOGIN="${ADMIN_LOGIN:-}"
   DEV_ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
   ADMIN_CREDENTIALS_CONFIGURED=false

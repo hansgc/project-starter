@@ -105,9 +105,9 @@ probar_mysql_network() {
 
   echo "Verificando conexión a MySQL desde la red Docker '$DB_NETWORK'..."
   if ! docker run --rm --network "$DB_NETWORK" --entrypoint mysqladmin mysql:8.0 \
-      ping -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" -p"$DB_PASS" --silent >/dev/null 2>&1; then
+      ping -h"$DB_HOST" -P"$DB_PORT_DEV" -u"$DB_USER" -p"$DB_PASS" --silent >/dev/null 2>&1; then
     echo "ERROR: No se pudo conectar a MySQL desde la red Docker '$DB_NETWORK'."
-    echo "Revisá que el contenedor MySQL esté levantado y que DB_HOST/DB_PORT sean correctos."
+    echo "Revisá que el contenedor MySQL esté levantado y que DB_HOST/DB_PORT_DEV sean correctos."
     return 1
   fi
 
@@ -142,7 +142,8 @@ if [[ -n "$CONFIG_FILE" ]]; then
   echo ""
 
   DB_HOST="${DB_HOST:-mysql}"
-  DB_PORT="${DB_PORT:-3306}"
+  DB_PORT_DEV="${DB_PORT_DEV:-3306}"
+  DB_PORT_PROD="${DB_PORT_PROD:-3306}"
   DB_NAME="${DB_NAME:-app_db}"
   DB_USER="${DB_USER:-app_user}"
   DB_PASS="${DB_PASS:-secret_password}"
@@ -344,7 +345,8 @@ cat > .env.example <<ENV
 # Configuración de MySQL
 # Aquí puedes usar el nombre del contenedor MySQL dentro de la red Docker compartida.
 DB_HOST=${DB_HOST}
-DB_PORT=${DB_PORT}
+DB_PORT_DEV=${DB_PORT_DEV}
+DB_PORT_PROD=${DB_PORT_PROD}
 DB_NAME=${DB_NAME}
 DB_USER=${DB_USER}
 DB_PASS=YOUR_DB_PASSWORD
@@ -374,7 +376,8 @@ ENV
 cat > .env <<ENV
 # Configuración de MySQL
 DB_HOST=${DB_HOST}
-DB_PORT=${DB_PORT}
+DB_PORT_DEV=${DB_PORT_DEV}
+DB_PORT_PROD=${DB_PORT_PROD}
 DB_NAME=${DB_NAME}
 DB_USER=${DB_USER}
 DB_PASS=${DB_PASS}
@@ -451,7 +454,7 @@ log() {
 hubo_cambios() {
     RESULTADO=$(mysql \
         --host="$DB_HOST" \
-        --port="$DB_PORT" \
+        --port="$DB_PORT_DEV" \
         --user="$DB_USER" \
         --password="$DB_PASS" \
         --silent --skip-column-names \
@@ -471,7 +474,7 @@ generar_backup() {
 
     if ! mysqldump \
         --host="$DB_HOST" \
-        --port="$DB_PORT" \
+        --port="$DB_PORT_DEV" \
         --user="$DB_USER" \
         --password="$DB_PASS" \
         --single-transaction \
@@ -488,7 +491,7 @@ generar_backup() {
 
     if ! mysql \
         --host="$DB_HOST" \
-        --port="$DB_PORT" \
+        --port="$DB_PORT_DEV" \
         --user="$DB_USER" \
         --password="$DB_PASS" \
         -e "UPDATE backup_auditoria SET ultimo_backup = NOW() LIMIT 1;" 2>/dev/null; then
@@ -566,7 +569,7 @@ limpiar_antiguos() {
 log "===== Iniciando ciclo de backup ====="
 
 log "Verificando conexión a MySQL..."
-if ! mysql --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USER" --password="$DB_PASS" -e "SELECT 1;" > /dev/null 2>&1; then
+if ! mysql --host="$DB_HOST" --port="$DB_PORT_DEV" --user="$DB_USER" --password="$DB_PASS" -e "SELECT 1;" > /dev/null 2>&1; then
     log "ERROR: No hay conexión a MySQL."
     exit 1
 fi
@@ -711,7 +714,8 @@ make logs-backup
 ## Variables de entorno necesarias
 
 - `DB_HOST`
-- `DB_PORT`
+- `DB_PORT_DEV`
+- `DB_PORT_PROD`
 - `DB_NAME`
 - `DB_USER`
 - `DB_PASS`
@@ -779,7 +783,8 @@ echo "    └── README.md"
 echo ""
 echo "  Configuración:"
 echo "    MySQL Host:       ${DB_HOST}"
-echo "    MySQL Port:       ${DB_PORT}"
+echo "    MySQL Port dev:   ${DB_PORT_DEV}"
+echo "    MySQL Port prod:  ${DB_PORT_PROD}"
 echo "    Database:         ${DB_NAME}"
 echo "    Usuario:          ${DB_USER}"
 echo "    DB Network:       ${DB_NETWORK}"
