@@ -246,21 +246,21 @@ services:
     container_name: ${PROJECT_SLUG}-backup-dev
     image: ${PROJECT_SLUG}-backup-dev
     restart: "no"
-    env_file: ../../.env
+    env_file: .env
     ports:
       - "${PORT_DEV}:${PORT_DEV}"
     volumes:
       - ../../:/workspace:cached
       - backup_data:/backups
     networks:
-      - ${DB_NETWORK_DEV}
+      - "\${DB_NETWORK_DEV}"
 
 volumes:
   backup_data:
 
 networks:
-  ${DB_NETWORK_DEV}:
-    name: ${DB_NETWORK_DEV}
+  \${DB_NETWORK_DEV}:
+    name: "\${DB_NETWORK_DEV}"
     external: true
 YAML
 
@@ -304,19 +304,19 @@ services:
     container_name: ${PROJECT_SLUG}-backup-prod
     image: ${PROJECT_SLUG}-backup-prod
     restart: unless-stopped
-    env_file: ../../.env
+    env_file: .env
     volumes:
       - backup_data_prod:/backups
     networks:
-      - ${DB_NETWORK_PROD}
+      - "\${DB_NETWORK_PROD}"
 
 volumes:
   backup_data_prod:
 
 networks:
-  ${DB_NETWORK_PROD}:
+  \${DB_NETWORK_PROD}:
+    name: "\${DB_NETWORK_PROD}"
     external: true
-    name: ${DB_NETWORK_PROD}
 YAML
 
 step "Generando .devcontainer"
@@ -341,18 +341,17 @@ JSON
 
 step "Generando variables de entorno (.env)"
 
-cat > .env.example <<ENV
+cat > aDespliegue/dev/.env.example <<ENV
 # Configuración de MySQL
 # Aquí puedes usar el nombre del contenedor MySQL dentro de la red Docker compartida.
 DB_HOST=${DB_HOST}
 DB_PORT_DEV=${DB_PORT_DEV}
-DB_PORT_PROD=${DB_PORT_PROD}
 DB_NAME=${DB_NAME}
 DB_USER=${DB_USER}
 DB_PASS=YOUR_DB_PASSWORD
 
 # Red Docker donde está el contenedor MySQL
-DB_NETWORK=${DB_NETWORK}
+DB_NETWORK_DEV=${DB_NETWORK_DEV}
 
 # Identificación del cliente
 CLIENTE_ID=${CLIENTE_ID}
@@ -364,26 +363,21 @@ B2_BUCKET=${B2_BUCKET}
 
 # Puertos
 PORT_DEV=8080
-PORT_PROD=80
-
-# Servidor de producción (opcional)
-PROD_SERVER_IP=
 
 # Schedule de Cron (expresión cron)
 BACKUP_SCHEDULE=${BACKUP_SCHEDULE}
 ENV
 
-cat > .env <<ENV
+cat > aDespliegue/dev/.env <<ENV
 # Configuración de MySQL
 DB_HOST=${DB_HOST}
 DB_PORT_DEV=${DB_PORT_DEV}
-DB_PORT_PROD=${DB_PORT_PROD}
 DB_NAME=${DB_NAME}
 DB_USER=${DB_USER}
 DB_PASS=${DB_PASS}
 
 # Red Docker donde está el contenedor MySQL
-DB_NETWORK=${DB_NETWORK}
+DB_NETWORK_DEV=${DB_NETWORK_DEV}
 
 # Identificación del cliente
 CLIENTE_ID=${CLIENTE_ID}
@@ -395,6 +389,61 @@ B2_BUCKET=${B2_BUCKET}
 
 # Puertos
 PORT_DEV=${PORT_DEV}
+
+# Schedule de Cron (expresión cron)
+BACKUP_SCHEDULE=${BACKUP_SCHEDULE}
+ENV
+
+cat > aDespliegue/prod/.env.example <<ENV
+# Configuración de MySQL
+# Aquí puedes usar el nombre del contenedor MySQL dentro de la red Docker compartida.
+DB_HOST=${DB_HOST}
+DB_PORT_PROD=${DB_PORT_PROD}
+DB_NAME=${DB_NAME}
+DB_USER=${DB_USER}
+DB_PASS=YOUR_DB_PASSWORD
+
+# Red Docker donde está el contenedor MySQL
+DB_NETWORK_PROD=${DB_NETWORK_PROD}
+
+# Identificación del cliente
+CLIENTE_ID=${CLIENTE_ID}
+
+# Backblaze B2
+B2_KEY_ID=YOUR_B2_KEY_ID
+B2_APP_KEY=YOUR_B2_APP_KEY
+B2_BUCKET=${B2_BUCKET}
+
+# Puertos
+PORT_PROD=80
+
+# Servidor de producción (opcional)
+PROD_SERVER_IP=
+
+# Schedule de Cron (expresión cron)
+BACKUP_SCHEDULE=${BACKUP_SCHEDULE}
+ENV
+
+cat > aDespliegue/prod/.env <<ENV
+# Configuración de MySQL
+DB_HOST=${DB_HOST}
+DB_PORT_PROD=${DB_PORT_PROD}
+DB_NAME=${DB_NAME}
+DB_USER=${DB_USER}
+DB_PASS=${DB_PASS}
+
+# Red Docker donde está el contenedor MySQL
+DB_NETWORK_PROD=${DB_NETWORK_PROD}
+
+# Identificación del cliente
+CLIENTE_ID=${CLIENTE_ID}
+
+# Backblaze B2
+B2_KEY_ID=${B2_KEY_ID}
+B2_APP_KEY=${B2_APP_KEY}
+B2_BUCKET=${B2_BUCKET}
+
+# Puertos
 PORT_PROD=${PORT_PROD}
 
 # Servidor de producción (opcional)
@@ -594,9 +643,6 @@ step "Generando Makefile"
 cat > Makefile <<'MAKE'
 .PHONY: help logs logs-backup sh backup-now backup-logs up-dev down-dev up-prod down-prod build-dev build-prod
 
-include .env
-export
-
 help:
 	@echo "Comandos disponibles:"
 	@echo "  make help                - Muestra esta ayuda"
@@ -610,52 +656,52 @@ help:
 	@echo "  make backup-logs-{dev|prod} - Muestra los logs de backup del contenedor"
 
 up-dev:
-	docker compose --env-file .env -f aDespliegue/dev/docker-compose.yml up -d
+	cd aDespliegue/dev && docker compose up -d
 
 down-dev:
-	docker compose --env-file .env -f aDespliegue/dev/docker-compose.yml down
+	cd aDespliegue/dev && docker compose down
 
 build-dev:
-	docker compose --env-file .env -f aDespliegue/dev/docker-compose.yml build --no-cache
+	cd aDespliegue/dev && docker compose build --no-cache
 
 up-prod:
-	docker compose --env-file .env -f aDespliegue/prod/docker-compose.yml up -d
+	cd aDespliegue/prod && docker compose up -d
 
 down-prod:
-	docker compose --env-file .env -f aDespliegue/prod/docker-compose.yml down
+	cd aDespliegue/prod && docker compose down
 
 build-prod:
-	docker compose --env-file .env -f aDespliegue/prod/docker-compose.yml build --no-cache
+	cd aDespliegue/prod && docker compose build --no-cache
 
 logs-dev:
-	docker compose --env-file .env -f aDespliegue/dev/docker-compose.yml logs -f
+	cd aDespliegue/dev && docker compose logs -f
 
 logs-prod:
-	docker compose --env-file .env -f aDespliegue/prod/docker-compose.yml logs -f
+	cd aDespliegue/prod && docker compose logs -f
 
 logs-backup-dev:
-	docker compose --env-file .env -f aDespliegue/dev/docker-compose.yml logs -f backup
+	cd aDespliegue/dev && docker compose logs -f backup
 
 logs-backup-prod:
-	docker compose --env-file .env -f aDespliegue/prod/docker-compose.yml logs -f backup
+	cd aDespliegue/prod && docker compose logs -f backup
 
 sh-dev:
-	docker compose --env-file .env -f aDespliegue/dev/docker-compose.yml exec backup bash
+	cd aDespliegue/dev && docker compose exec backup bash
 
 sh-prod:
-	docker compose --env-file .env -f aDespliegue/prod/docker-compose.yml exec backup bash
+	cd aDespliegue/prod && docker compose exec backup bash
 
 backup-now-dev:
-	docker compose --env-file .env -f aDespliegue/dev/docker-compose.yml exec backup /usr/local/bin/backup.sh
+	cd aDespliegue/dev && docker compose exec backup /usr/local/bin/backup.sh
 
 backup-now-prod:
-	docker compose --env-file .env -f aDespliegue/prod/docker-compose.yml exec backup /usr/local/bin/backup.sh
+	cd aDespliegue/prod && docker compose exec backup /usr/local/bin/backup.sh
 
 backup-logs-dev:
-	docker compose --env-file .env -f aDespliegue/dev/docker-compose.yml exec backup tail -f /var/log/backup.log
+	cd aDespliegue/dev && docker compose exec backup tail -f /var/log/backup.log
 
 backup-logs-prod:
-	docker compose --env-file .env -f aDespliegue/prod/docker-compose.yml exec backup tail -f /var/log/backup.log
+	cd aDespliegue/prod && docker compose exec backup tail -f /var/log/backup.log
 MAKE
 
 step "Generando README.md"
@@ -672,17 +718,19 @@ ${PROJECT_FOLDER}/
 ├── .devcontainer/
 ├── aDespliegue/dev/
 │   ├── docker-compose.yml
-│   └── Dockerfile
+│   ├── Dockerfile
+│   ├── .env
+│   └── .env.example
 ├── aDespliegue/prod/
 │   ├── docker-compose.yml
-│   └── Dockerfile
+│   ├── Dockerfile
+│   ├── .env
+│   └── .env.example
 ├── app/
 │   ├── backup.sh
 │   ├── entrypoint.sh
 │   └── crontab
 ├── Makefile
-├── .env
-├── .env.example
 ├── README.md
 └── .gitignore
 ```
@@ -739,7 +787,8 @@ README
 step "Generando .gitignore"
 
 cat > .gitignore <<'GITIGNORE'
-.env
+aDespliegue/dev/.env
+aDespliegue/prod/.env
 backups/
 /var/log/backup.log
 *.sql.gz
@@ -771,15 +820,18 @@ echo "╚═══════════════════════�
 echo ""
 echo "  Estructura creada:"
 echo "    ${PROJECT_FOLDER}/"
-echo "    ├── .devcontainer/"
-echo "    ├── aDespliegue/dev/"
-echo "    ├── aDespliegue/prod/"
-echo "    ├── app/"
-echo "    ├── Makefile"
-echo "    ├── .env"
-echo "    ├── .env.example"
-echo "    ├── leeme.txt"
-echo "    └── README.md"
+echo "    ├── aDespliegue/dev/
+    │   ├── docker-compose.yml
+    │   ├── .env
+    │   └── Dockerfile
+    ├── aDespliegue/prod/
+    │   ├── docker-compose.yml
+    │   ├── .env
+    │   └── Dockerfile
+    ├── app/
+    ├── Makefile
+    ├── leeme.txt
+    └── README.md"
 echo ""
 echo "  Configuración:"
 echo "    MySQL Host:       ${DB_HOST}"
@@ -797,3 +849,5 @@ echo "  Próximos pasos:"
 echo "    1. Ejecuta: make up"
 echo "    2. Revisa logs: make logs-backup"
 echo ""
+
+fi

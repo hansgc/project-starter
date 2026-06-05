@@ -614,8 +614,7 @@ cat > .devcontainer/devcontainer.json <<JSON
       }
     }
   },
-  "postCreateCommand": "cd /workspace/app && composer install",
-  "postStartCommand": "cd /workspace/app && symfony server:start --no-tls --port=8000 --daemon"
+  "postCreateCommand": "cd /workspace/app && composer install"
 }
 JSON
 
@@ -734,8 +733,6 @@ PHP_SERVICE_dev = ${DEV_PHP_SERVICE}
 PHP_SERVICE_prod = ${PROD_PHP_SERVICE}
 APP_DIR_dev = /workspace/app
 APP_DIR_prod = /workspace
-include .env
-export
 
 help:
 	@echo "Comandos disponibles:"
@@ -752,79 +749,79 @@ help:
 	@echo "  make ps-{dev|prod}    - Muestra el estado de los contenedores"
 
 up-dev:
-	docker compose -f aDespliegue/dev/docker-compose.yml up -d
+	cd aDespliegue/dev && docker compose up -d
 
 down-dev:
-	docker compose -f aDespliegue/dev/docker-compose.yml down
+	cd aDespliegue/dev && docker compose down
 
 build-dev:
-	docker compose -f aDespliegue/dev/docker-compose.yml build --no-cache
+	cd aDespliegue/dev && docker compose build --no-cache
 
 up-prod:
-	docker compose -f aDespliegue/prod/docker-compose.yml up -d
+	cd aDespliegue/prod && docker compose up -d
 
 down-prod:
-	docker compose -f aDespliegue/prod/docker-compose.yml down
+	cd aDespliegue/prod && docker compose down
 
 build-prod:
-	docker compose -f aDespliegue/prod/docker-compose.yml build --no-cache
+	cd aDespliegue/prod && docker compose build --no-cache
 
 serve:
-	docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE} symfony server:start --no-tls --port=8000 --daemon
+	cd aDespliegue/dev && docker compose exec -w /workspace/app ${DEV_PHP_SERVICE} symfony server:start --no-tls --port=8000 --daemon
 
 stop:
-	docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE} symfony server:stop 2>/dev/null || true
+	cd aDespliegue/dev && docker compose exec -w /workspace/app ${DEV_PHP_SERVICE} symfony server:stop 2>/dev/null || true
 
 sh-dev:
-	docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE} bash
+	cd aDespliegue/dev && docker compose exec -w /workspace/app ${DEV_PHP_SERVICE} bash
 
 sh-prod:
-	docker compose -f aDespliegue/prod/docker-compose.yml exec -w /workspace ${PROD_PHP_SERVICE} bash
+	cd aDespliegue/prod && docker compose exec -w /workspace ${PROD_PHP_SERVICE} bash
 
 cc-dev:
-	docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE} php bin/console cache:clear
+	cd aDespliegue/dev && docker compose exec -w /workspace/app ${DEV_PHP_SERVICE} php bin/console cache:clear
 
 cc-prod:
-	docker compose -f aDespliegue/prod/docker-compose.yml exec -w /workspace ${PROD_PHP_SERVICE} php bin/console cache:clear
+	cd aDespliegue/prod && docker compose exec -w /workspace ${PROD_PHP_SERVICE} php bin/console cache:clear
 
 logs-dev:
-	docker compose -f aDespliegue/dev/docker-compose.yml logs -f
+	cd aDespliegue/dev && docker compose logs -f
 
 logs-prod:
-	docker compose -f aDespliegue/prod/docker-compose.yml logs -f
+	cd aDespliegue/prod && docker compose logs -f
 
 logs-symfony:
-	docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE} symfony server:log
+	cd aDespliegue/dev && docker compose exec -w /workspace/app ${DEV_PHP_SERVICE} symfony server:log
 
 ps-dev:
-	docker compose -f aDespliegue/dev/docker-compose.yml ps
+	cd aDespliegue/dev && docker compose ps
 
 ps-prod:
-	docker compose -f aDespliegue/prod/docker-compose.yml ps
+	cd aDespliegue/prod && docker compose ps
 
 MAKE
 
 [[ -n "${DB_HOST:-}" ]] && cat >> Makefile <<MAKE
 migrate-dev:
-	docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE} php bin/console doctrine:migrations:migrate --no-interaction
+	cd aDespliegue/dev && docker compose exec -w /workspace/app ${DEV_PHP_SERVICE} php bin/console doctrine:migrations:migrate --no-interaction
 
 migrate-prod:
-	docker compose -f aDespliegue/prod/docker-compose.yml exec -w /workspace ${PROD_PHP_SERVICE} php bin/console doctrine:migrations:migrate --no-interaction
+	cd aDespliegue/prod && docker compose exec -w /workspace ${PROD_PHP_SERVICE} php bin/console doctrine:migrations:migrate --no-interaction
 
 migration-dev:
-	docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE} php bin/console make:migration
+	cd aDespliegue/dev && docker compose exec -w /workspace/app ${DEV_PHP_SERVICE} php bin/console make:migration
 
 migration-prod:
-	docker compose -f aDespliegue/prod/docker-compose.yml exec -w /workspace ${PROD_PHP_SERVICE} php bin/console make:migration
+	cd aDespliegue/prod && docker compose exec -w /workspace ${PROD_PHP_SERVICE} php bin/console make:migration
 
 MAKE
 
 $USE_JWT && cat >> Makefile <<MAKE
 jwt-keys-dev:
-	docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE} php bin/console lexik:jwt:generate-keypair
+	cd aDespliegue/dev && docker compose exec -w /workspace/app ${DEV_PHP_SERVICE} php bin/console lexik:jwt:generate-keypair
 
 jwt-keys-prod:
-	docker compose -f aDespliegue/prod/docker-compose.yml exec -w /workspace ${PROD_PHP_SERVICE} php bin/console lexik:jwt:generate-keypair
+	cd aDespliegue/prod && docker compose exec -w /workspace ${PROD_PHP_SERVICE} php bin/console lexik:jwt:generate-keypair
 
 MAKE
 
@@ -836,8 +833,6 @@ PHP_SERVICE_dev = ${DEV_PHP_SERVICE}
 PHP_SERVICE_prod = ${PROD_PHP_SERVICE}
 APP_DIR_dev = /workspace/app
 APP_DIR_prod = /workspace
-include .env
-export
 
 help:
 	@echo "Comandos disponibles:"
@@ -850,40 +845,40 @@ help:
 	@echo "  make ps-{dev|prod}    - Muestra el estado de los contenedores"
 
 up-dev:
-	docker compose -f aDespliegue/dev/docker-compose.yml up -d
+	cd aDespliegue/dev && docker compose up -d
 
 down-dev:
-	docker compose -f aDespliegue/dev/docker-compose.yml down
+	cd aDespliegue/dev && docker compose down
 
 build-dev:
-	docker compose -f aDespliegue/dev/docker-compose.yml build --no-cache
+	cd aDespliegue/dev && docker compose build --no-cache
 
 up-prod:
-	docker compose -f aDespliegue/prod/docker-compose.yml up -d
+	cd aDespliegue/prod && docker compose up -d
 
 down-prod:
-	docker compose -f aDespliegue/prod/docker-compose.yml down
+	cd aDespliegue/prod && docker compose down
 
 build-prod:
-	docker compose -f aDespliegue/prod/docker-compose.yml build --no-cache
+	cd aDespliegue/prod && docker compose build --no-cache
 
 sh-dev:
-	docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE} bash
+	cd aDespliegue/dev && docker compose exec -w /workspace/app ${DEV_PHP_SERVICE} bash
 
 sh-prod:
-	docker compose -f aDespliegue/prod/docker-compose.yml exec -w /workspace ${PROD_PHP_SERVICE} bash
+	cd aDespliegue/prod && docker compose exec -w /workspace ${PROD_PHP_SERVICE} bash
 
 logs-dev:
-	docker compose -f aDespliegue/dev/docker-compose.yml logs -f
+	cd aDespliegue/dev && docker compose logs -f
 
 logs-prod:
-	docker compose -f aDespliegue/prod/docker-compose.yml logs -f
+	cd aDespliegue/prod && docker compose logs -f
 
 ps-dev:
-	docker compose -f aDespliegue/dev/docker-compose.yml ps
+	cd aDespliegue/dev && docker compose ps
 
 ps-prod:
-	docker compose -f aDespliegue/prod/docker-compose.yml ps
+	cd aDespliegue/prod && docker compose ps
 
 MAKE
 fi
@@ -1317,3 +1312,5 @@ fi
 echo ""
 echo "  En VSCode: Dev Containers: Reopen in Container"
 echo ""
+
+fi

@@ -104,6 +104,7 @@ step "Creando estructura de directorios"
 mkdir -p "$PROJECT_SLUG"
 cd "$PROJECT_SLUG"
 
+mkdir -p .devcontainer
 mkdir -p aDespliegue/dev
 mkdir -p aDespliegue/prod
 
@@ -116,6 +117,7 @@ services:
     image: mysql:${MYSQL_VERSION}
     container_name: ${PROJECT_SLUG}_db_dev
     restart: "no"
+    env_file: .env
     environment:
       MYSQL_ROOT_PASSWORD: "\${DB_ROOT_PASSWORD}"
       MYSQL_DATABASE: "\${DB_NAME}"
@@ -126,15 +128,24 @@ services:
     volumes:
       - ${PROJECT_SLUG}_db_data:/var/lib/mysql
     networks:
-      - ${DB_NETWORK_DEV}
+      - "\${DB_NETWORK_DEV}"
+
+  dev:
+    image: mcr.microsoft.com/devcontainers/base:debian
+    container_name: ${PROJECT_SLUG}_dev
+    command: sleep infinity
+    volumes:
+      - ../../:/workspace:cached
+    networks:
+      - "\${DB_NETWORK_DEV}"
 
 volumes:
   ${PROJECT_SLUG}_db_data:
     name: ${PROJECT_SLUG}_db_data
 
 networks:
-  ${DB_NETWORK_DEV}:
-    name: ${DB_NETWORK_DEV}
+  \${DB_NETWORK_DEV}:
+    name: "\${DB_NETWORK_DEV}"
     external: true
 YAML
 
@@ -147,6 +158,7 @@ services:
     image: mysql:${MYSQL_VERSION}
     container_name: ${PROJECT_SLUG}_db_prod
     restart: unless-stopped
+    env_file: .env
     environment:
       MYSQL_ROOT_PASSWORD: "\${DB_ROOT_PASSWORD}"
       MYSQL_DATABASE: "\${DB_NAME}"
@@ -157,43 +169,82 @@ services:
     volumes:
       - ${PROJECT_SLUG}_db_data_prod:/var/lib/mysql
     networks:
-      - ${DB_NETWORK_PROD}
+      - "\${DB_NETWORK_PROD}"
 
 volumes:
   ${PROJECT_SLUG}_db_data_prod:
     name: ${PROJECT_SLUG}_db_data_prod
 
 networks:
-  ${DB_NETWORK_PROD}:
+  \${DB_NETWORK_PROD}:
+    name: "\${DB_NETWORK_PROD}"
     external: true
-    name: ${DB_NETWORK_PROD}
 YAML
+
+# --- Generando .devcontainer ---
+step "Generando .devcontainer"
+
+cat > .devcontainer/devcontainer.json <<JSON
+{
+  "name": "${PROJECT_NAME} MySQL",
+  "dockerComposeFile": ["../aDespliegue/dev/docker-compose.yml"],
+  "service": "dev",
+  "workspaceFolder": "/workspace",
+  "shutdownAction": "stopCompose",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "mtxr.sqltools",
+        "mtxr.sqltools-driver-mysql"
+      ]
+    }
+  }
+}
+JSON
 
 # --- Generando .env y .env.example ---
 step "Generando variables de entorno (.env)"
 
-cat > .env.example <<ENV
+cat > aDespliegue/dev/.env.example <<ENV
 MYSQL_VERSION=${MYSQL_VERSION}
 MYSQL_PORT_DEV=${MYSQL_PORT_DEV}
+DB_NAME=${DB_NAME}
+DB_USER=${DB_USER}
+DB_PASSWORD=YOUR_DB_PASSWORD
+DB_ROOT_PASSWORD=YOUR_ROOT_PASSWORD
+DB_NETWORK_DEV=${DB_NETWORK_DEV}
+ENV
+
+cat > aDespliegue/dev/.env <<ENV
+MYSQL_VERSION=${MYSQL_VERSION}
+MYSQL_PORT_DEV=${MYSQL_PORT_DEV}
+DB_NAME=${DB_NAME}
+DB_USER=${DB_USER}
+DB_PASSWORD=${DB_PASSWORD}
+DB_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
+DB_NETWORK_DEV=${DB_NETWORK_DEV}
+ENV
+
+cat > aDespliegue/prod/.env.example <<ENV
+MYSQL_VERSION=${MYSQL_VERSION}
 MYSQL_PORT_PROD=${MYSQL_PORT_PROD}
 PROD_SERVER_IP=
 DB_NAME=${DB_NAME}
 DB_USER=${DB_USER}
 DB_PASSWORD=YOUR_DB_PASSWORD
 DB_ROOT_PASSWORD=YOUR_ROOT_PASSWORD
-DB_NETWORK=${DB_NETWORK}
+DB_NETWORK_PROD=${DB_NETWORK_PROD}
 ENV
 
-cat > .env <<ENV
+cat > aDespliegue/prod/.env <<ENV
 MYSQL_VERSION=${MYSQL_VERSION}
-MYSQL_PORT_DEV=${MYSQL_PORT_DEV}
 MYSQL_PORT_PROD=${MYSQL_PORT_PROD}
 PROD_SERVER_IP=${PROD_SERVER_IP}
 DB_NAME=${DB_NAME}
 DB_USER=${DB_USER}
 DB_PASSWORD=${DB_PASSWORD}
 DB_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
-DB_NETWORK=${DB_NETWORK}
+DB_NETWORK_PROD=${DB_NETWORK_PROD}
 ENV
 
 # --- Generando Makefile ---
@@ -204,8 +255,6 @@ cat > Makefile <<MAKE
 
 MYSQL_SERVICE_dev = ${PROJECT_SLUG}_db_dev
 MYSQL_SERVICE_prod = ${PROJECT_SLUG}_db_prod
-include .env
-export
 
 help:
 	@echo "Comandos disponibles:"
@@ -220,51 +269,51 @@ help:
 	@echo "  make restore-{dev|prod} - Restaura un backup desde la carpeta backups/"
 
 up-dev:
-	docker compose --env-file .env -f aDespliegue/dev/docker-compose.yml up -d
+	cd aDespliegue/dev && docker compose up -d
 
 down-dev:
-	docker compose --env-file .env -f aDespliegue/dev/docker-compose.yml down
+	cd aDespliegue/dev && docker compose down
 
 up-prod:
-	docker compose --env-file .env -f aDespliegue/prod/docker-compose.yml up -d
+	cd aDespliegue/prod && docker compose up -d
 
 down-prod:
-	docker compose --env-file .env -f aDespliegue/prod/docker-compose.yml down
+	cd aDespliegue/prod && docker compose down
 
 logs-dev:
-	docker compose --env-file .env -f aDespliegue/dev/docker-compose.yml logs -f
+	cd aDespliegue/dev && docker compose logs -f
 
 logs-prod:
-	docker compose --env-file .env -f aDespliegue/prod/docker-compose.yml logs -f
+	cd aDespliegue/prod && docker compose logs -f
 
 sh-dev:
-	docker compose --env-file .env -f aDespliegue/dev/docker-compose.yml exec ${MYSQL_SERVICE_dev} bash
+	cd aDespliegue/dev && docker compose exec ${MYSQL_SERVICE_dev} bash
 
 sh-prod:
-	docker compose --env-file .env -f aDespliegue/prod/docker-compose.yml exec ${MYSQL_SERVICE_prod} bash
+	cd aDespliegue/prod && docker compose exec ${MYSQL_SERVICE_prod} bash
 
 mysql-dev:
-	docker compose --env-file .env -f aDespliegue/dev/docker-compose.yml exec ${MYSQL_SERVICE_dev} mysql -u\$(DB_USER) -p\$(DB_PASSWORD) \$(DB_NAME)
+	cd aDespliegue/dev && docker compose exec ${MYSQL_SERVICE_dev} sh -c 'mysql -u\$\$MYSQL_USER -p\$\$MYSQL_PASSWORD \$\$MYSQL_DATABASE'
 
 mysql-prod:
-	docker compose --env-file .env -f aDespliegue/prod/docker-compose.yml exec ${MYSQL_SERVICE_prod} mysql -u\$(DB_USER) -p\$(DB_PASSWORD) \$(DB_NAME)
+	cd aDespliegue/prod && docker compose exec ${MYSQL_SERVICE_prod} sh -c 'mysql -u\$\$MYSQL_USER -p\$\$MYSQL_PASSWORD \$\$MYSQL_DATABASE'
 
 mysql-root-dev:
-	docker compose --env-file .env -f aDespliegue/dev/docker-compose.yml exec ${MYSQL_SERVICE_dev} mysql -uroot -p\$(DB_ROOT_PASSWORD) \$(DB_NAME)
+	cd aDespliegue/dev && docker compose exec ${MYSQL_SERVICE_dev} sh -c 'mysql -uroot -p\$\$MYSQL_ROOT_PASSWORD \$\$MYSQL_DATABASE'
 
 mysql-root-prod:
-	docker compose --env-file .env -f aDespliegue/prod/docker-compose.yml exec ${MYSQL_SERVICE_prod} mysql -uroot -p\$(DB_ROOT_PASSWORD) \$(DB_NAME)
+	cd aDespliegue/prod && docker compose exec ${MYSQL_SERVICE_prod} sh -c 'mysql -uroot -p\$\$MYSQL_ROOT_PASSWORD \$\$MYSQL_DATABASE'
 
 backup-dev:
 	@mkdir -p backups
 	@echo "Realizando copia de seguridad..."
-	docker compose --env-file .env -f aDespliegue/dev/docker-compose.yml exec -T ${MYSQL_SERVICE_dev} mysqldump -u\$(DB_USER) -p\$(DB_PASSWORD) \$(DB_NAME) > backups/backup_\$\$(date +%Y%m%d_%H%M%S).sql
+	cd aDespliegue/dev && docker compose exec -T ${MYSQL_SERVICE_dev} sh -c 'mysqldump -u\$\$MYSQL_USER -p\$\$MYSQL_PASSWORD \$\$MYSQL_DATABASE' > ../../backups/backup_\$\$(date +%Y%m%d_%H%M%S).sql
 	@echo "Copia de seguridad guardada en backups/"
 
 backup-prod:
 	@mkdir -p backups
 	@echo "Realizando copia de seguridad..."
-	docker compose --env-file .env -f aDespliegue/prod/docker-compose.yml exec -T ${MYSQL_SERVICE_prod} mysqldump -u\$(DB_USER) -p\$(DB_PASSWORD) \$(DB_NAME) > backups/backup_\$\$(date +%Y%m%d_%H%M%S).sql
+	cd aDespliegue/prod && docker compose exec -T ${MYSQL_SERVICE_prod} sh -c 'mysqldump -u\$\$MYSQL_USER -p\$\$MYSQL_PASSWORD \$\$MYSQL_DATABASE' > ../../backups/backup_\$\$(date +%Y%m%d_%H%M%S).sql
 	@echo "Copia de seguridad guardada en backups/"
 
 restore-dev:
@@ -277,7 +326,7 @@ restore-dev:
 	@read -p "Ingresa el nombre del archivo de backup a restaurar (ej: backups/backup_xxx.sql): " backup_file; \\
 	if [ -f "\$\$backup_file" ]; then \\
 		echo "Restaurando \$\$backup_file..."; \\
-		docker compose --env-file .env -f aDespliegue/dev/docker-compose.yml exec -T ${MYSQL_SERVICE_dev} mysql -u\$(DB_USER) -p\$(DB_PASSWORD) \$(DB_NAME) < "\$\$backup_file"; \\
+		cd aDespliegue/dev && docker compose exec -T ${MYSQL_SERVICE_dev} sh -c 'mysql -u\$\$MYSQL_USER -p\$\$MYSQL_PASSWORD \$\$MYSQL_DATABASE' < ../../"\$\$backup_file"; \\
 		echo "Restauración completada con éxito."; \\
 	else \\
 		echo "El archivo '\$\$backup_file' no existe."; \\
@@ -294,7 +343,7 @@ restore-prod:
 	@read -p "Ingresa el nombre del archivo de backup a restaurar (ej: backups/backup_xxx.sql): " backup_file; \\
 	if [ -f "\$\$backup_file" ]; then \\
 		echo "Restaurando \$\$backup_file..."; \\
-		docker compose --env-file .env -f aDespliegue/prod/docker-compose.yml exec -T ${MYSQL_SERVICE_prod} mysql -u\$(DB_USER) -p\$(DB_PASSWORD) \$(DB_NAME) < "\$\$backup_file"; \\
+		cd aDespliegue/prod && docker compose exec -T ${MYSQL_SERVICE_prod} sh -c 'mysql -u\$\$MYSQL_USER -p\$\$MYSQL_PASSWORD \$\$MYSQL_DATABASE' < ../../"\$\$backup_file"; \\
 		echo "Restauración completada con éxito."; \\
 	else \\
 		echo "El archivo '\$\$backup_file' no existe."; \\
@@ -306,7 +355,8 @@ MAKE
 step "Generando .gitignore"
 
 cat > .gitignore <<GIT
-.env
+aDespliegue/dev/.env
+aDespliegue/prod/.env
 backups/
 GIT
 
@@ -335,10 +385,12 @@ echo "╚═══════════════════════�
 echo ""
 echo "  Estructura creada:"
 echo "    ${PROJECT_SLUG}/"
+echo "    ├── .devcontainer/"
 echo "    ├── aDespliegue/dev/docker-compose.yml"
+echo "    ├── aDespliegue/dev/.env"
 echo "    ├── aDespliegue/prod/docker-compose.yml"
+echo "    ├── aDespliegue/prod/.env"
 echo "    ├── Makefile"
-echo "    ├── .env"
 echo "    ├── leeme.txt"
 echo "    └── .gitignore"
 echo ""

@@ -103,6 +103,7 @@ step "Creando estructura de directorios"
 mkdir -p "$PROJECT_SLUG"
 cd "$PROJECT_SLUG"
 
+mkdir -p .devcontainer
 mkdir -p aDespliegue/dev
 mkdir -p aDespliegue/prod
 
@@ -115,6 +116,7 @@ services:
     image: phpmyadmin:latest
     container_name: ${PROJECT_SLUG}_pma_dev
     restart: "no"
+    env_file: .env
     environment:
       PMA_HOST: "\${PMA_HOST}"
       PMA_PORT: "\${PMA_DB_PORT_DEV}"
@@ -125,11 +127,20 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
-      - ${DB_NETWORK_DEV}
+      - "\${DB_NETWORK_DEV}"
+
+  dev:
+    image: mcr.microsoft.com/devcontainers/base:debian
+    container_name: ${PROJECT_SLUG}_dev
+    command: sleep infinity
+    volumes:
+      - ../../:/workspace:cached
+    networks:
+      - "\${DB_NETWORK_DEV}"
 
 networks:
-  ${DB_NETWORK_DEV}:
-    name: ${DB_NETWORK_DEV}
+  \${DB_NETWORK_DEV}:
+    name: "\${DB_NETWORK_DEV}"
     external: true
 YAML
 
@@ -142,6 +153,7 @@ services:
     image: phpmyadmin:latest
     container_name: ${PROJECT_SLUG}_pma_prod
     restart: unless-stopped
+    env_file: .env
     environment:
       PMA_HOST: "\${PMA_HOST}"
       PMA_PORT: "\${PMA_DB_PORT_PROD}"
@@ -152,37 +164,59 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
-      - ${DB_NETWORK_PROD}
+      - "\${DB_NETWORK_PROD}"
 
 networks:
-  ${DB_NETWORK_PROD}:
+  \${DB_NETWORK_PROD}:
+    name: "\${DB_NETWORK_PROD}"
     external: true
-    name: ${DB_NETWORK_PROD}
 YAML
 
-# --- Generando .env y .env.example ---
-step "Generando variables de entorno (.env)"
+# --- Generando .devcontainer ---
+step "Generando .devcontainer"
 
-cat > .env.example <<ENV
+cat > .devcontainer/devcontainer.json <<JSON
+{
+  "name": "${PROJECT_NAME} phpMyAdmin",
+  "dockerComposeFile": ["../aDespliegue/dev/docker-compose.yml"],
+  "service": "dev",
+  "workspaceFolder": "/workspace",
+  "shutdownAction": "stopCompose"
+}
+JSON
+
+cat > aDespliegue/dev/.env.example <<ENV
 PMA_PORT_DEV=${PMA_PORT_DEV}
+PMA_HOST=${PMA_HOST}
+PMA_DB_PORT_DEV=${PMA_DB_PORT_DEV}
+PMA_ARBITRARY=${PMA_ARBITRARY}
+DB_NETWORK_DEV=${DB_NETWORK_DEV}
+ENV
+
+cat > aDespliegue/dev/.env <<ENV
+PMA_PORT_DEV=${PMA_PORT_DEV}
+PMA_HOST=${PMA_HOST}
+PMA_DB_PORT_DEV=${PMA_DB_PORT_DEV}
+PMA_ARBITRARY=${PMA_ARBITRARY}
+DB_NETWORK_DEV=${DB_NETWORK_DEV}
+ENV
+
+cat > aDespliegue/prod/.env.example <<ENV
 PMA_PORT_PROD=${PMA_PORT_PROD}
 PROD_SERVER_IP=
 PMA_HOST=${PMA_HOST}
-PMA_DB_PORT_DEV=${PMA_DB_PORT_DEV}
 PMA_DB_PORT_PROD=${PMA_DB_PORT_PROD}
 PMA_ARBITRARY=${PMA_ARBITRARY}
-DB_NETWORK=${DB_NETWORK}
+DB_NETWORK_PROD=${DB_NETWORK_PROD}
 ENV
 
-cat > .env <<ENV
-PMA_PORT_DEV=${PMA_PORT_DEV}
+cat > aDespliegue/prod/.env <<ENV
 PMA_PORT_PROD=${PMA_PORT_PROD}
 PROD_SERVER_IP=${PROD_SERVER_IP}
 PMA_HOST=${PMA_HOST}
-PMA_DB_PORT_DEV=${PMA_DB_PORT_DEV}
 PMA_DB_PORT_PROD=${PMA_DB_PORT_PROD}
 PMA_ARBITRARY=${PMA_ARBITRARY}
-DB_NETWORK=${DB_NETWORK}
+DB_NETWORK_PROD=${DB_NETWORK_PROD}
 ENV
 
 # --- Generando Makefile ---
@@ -193,8 +227,6 @@ cat > Makefile <<MAKE
 
 PMA_SERVICE_dev = ${PROJECT_SLUG}_pma_dev
 PMA_SERVICE_prod = ${PROJECT_SLUG}_pma_prod
-include .env
-export
 
 help:
 	@echo "Comandos disponibles:"
@@ -205,35 +237,36 @@ help:
 	@echo "  make sh-{dev|prod}    - Accede al shell del contenedor phpMyAdmin"
 
 up-dev:
-	docker compose --env-file .env -f aDespliegue/dev/docker-compose.yml up -d
+	cd aDespliegue/dev && docker compose up -d
 
 down-dev:
-	docker compose --env-file .env -f aDespliegue/dev/docker-compose.yml down
+	cd aDespliegue/dev && docker compose down
 
 up-prod:
-	docker compose --env-file .env -f aDespliegue/prod/docker-compose.yml up -d
+	cd aDespliegue/prod && docker compose up -d
 
 down-prod:
-	docker compose --env-file .env -f aDespliegue/prod/docker-compose.yml down
+	cd aDespliegue/prod && docker compose down
 
 logs-dev:
-	docker compose --env-file .env -f aDespliegue/dev/docker-compose.yml logs -f
+	cd aDespliegue/dev && docker compose logs -f
 
 logs-prod:
-	docker compose --env-file .env -f aDespliegue/prod/docker-compose.yml logs -f
+	cd aDespliegue/prod && docker compose logs -f
 
 sh-dev:
-	docker compose --env-file .env -f aDespliegue/dev/docker-compose.yml exec ${PMA_SERVICE_dev} sh
+	cd aDespliegue/dev && docker compose exec \${PMA_SERVICE_dev} sh
 
 sh-prod:
-	docker compose --env-file .env -f aDespliegue/prod/docker-compose.yml exec ${PMA_SERVICE_prod} sh
+	cd aDespliegue/prod && docker compose exec \${PMA_SERVICE_prod} sh
 MAKE
 
 # --- Generando .gitignore ---
 step "Generando .gitignore"
 
 cat > .gitignore <<GIT
-.env
+aDespliegue/dev/.env
+aDespliegue/prod/.env
 GIT
 
 # --- Generando leeme.txt ---
@@ -261,10 +294,12 @@ echo "╚═══════════════════════�
 echo ""
 echo "  Estructura creada:"
 echo "    ${PROJECT_SLUG}/"
+echo "    ├── .devcontainer/"
 echo "    ├── aDespliegue/dev/docker-compose.yml"
+echo "    ├── aDespliegue/dev/.env"
 echo "    ├── aDespliegue/prod/docker-compose.yml"
+echo "    ├── aDespliegue/prod/.env"
 echo "    ├── Makefile"
-echo "    ├── .env"
 echo "    ├── leeme.txt"
 echo "    └── .gitignore"
 echo ""
@@ -287,3 +322,5 @@ echo "    make up-{dev|prod}    → iniciar phpMyAdmin"
 echo "    make down-{dev|prod}  → detener phpMyAdmin"
 echo "    make logs-{dev|prod}  → ver logs en tiempo real"
 echo ""
+
+fi
