@@ -160,7 +160,23 @@ if [[ -n "$CONFIG_FILE" ]]; then
   PROD_SERVER_IP="${PROD_SERVER_IP:-}"
   mostrar_config_valores
 
-step "Verificando red y conexión a MySQL"
+# --- Verificar red Docker ---
+step "Verificando red Docker"
+if ! verificar_red_docker "$DB_NETWORK"; then
+  echo "  ⚠ La red Docker '$DB_NETWORK' no existe."
+  echo "  Creando red automáticamente..."
+  if crear_red_docker "$DB_NETWORK"; then
+    echo "  ✓ Red '$DB_NETWORK' creada."
+  else
+    echo "  ❌ No se pudo crear la red '$DB_NETWORK'. Por favor, créala manualmente con:"
+    echo "     docker network create $DB_NETWORK"
+    exit 1
+  fi
+else
+  echo "  ✓ La red '$DB_NETWORK' existe."
+fi
+
+step "Verificando conexión a MySQL"
 if ! probar_mysql_network; then
   echo "ERROR: No se puede continuar sin una conexión funcional a MySQL en la red Docker especificada."
   exit 1
@@ -631,15 +647,15 @@ echo "╚═══════════════════════�
 echo ""
 echo "  Estructura creada:"
 echo "    ${PROJECT_FOLDER}/"
-echo "    ├── app/
+echo "    ├── app/"
 echo "    ├── aDespliegue/"
 echo "    │   ├── docker-compose.yml"
 echo "    │   ├── .env"
 echo "    │   ├── .env.example"
 echo "    │   └── Dockerfile"
-    ├── Makefile
-    ├── leeme.txt
-    └── README.md"
+echo "    ├── Makefile"
+echo "    ├── leeme.txt"
+echo "    └── README.md"
 echo ""
 echo "  Configuración:"
 echo "    MySQL Host:       ${DB_HOST}"

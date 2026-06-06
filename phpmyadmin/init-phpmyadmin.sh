@@ -67,8 +67,8 @@ if [[ -n "$CONFIG_FILE" ]]; then
 
   PMA_PORT="${PMA_PORT:-8021}"
   PROD_SERVER_IP="${PROD_SERVER_IP:-}"
-  PMA_HOST="${PMA_HOST:-host.docker.internal}"
-  PMA_DB_PORT="${PMA_DB_PORT:-3306}"
+  DB_HOST="${DB_HOST:-host.docker.internal}"
+  DB_PORT="${DB_PORT:-3306}"
   PMA_ARBITRARY="${PMA_ARBITRARY:-1}"
   DB_NETWORK="${DB_NETWORK:-}"
 
@@ -107,12 +107,12 @@ cat > aDespliegue/docker-compose.yml <<YAML
 services:
   ${PROJECT_SLUG}:
     image: phpmyadmin:latest
-    container_name: ${PROJECT_SLUG}_prod
+    container_name: ${PROJECT_SLUG}
     restart: unless-stopped
     env_file: .env
     environment:
-      PMA_HOST: "\${PMA_HOST}"
-      PMA_PORT: "\${PMA_DB_PORT}"
+      PMA_HOST: "\${DB_HOST}"
+      PMA_PORT: "\${DB_PORT}"
       PMA_ARBITRARY: "\${PMA_ARBITRARY}"
       PMA_ABSOLUTE_URI: "http://localhost:\${PMA_PORT}/"
     ports:
@@ -130,16 +130,16 @@ YAML
 
 cat > aDespliegue/.env.example <<ENV
 PMA_PORT=${PMA_PORT}
-PMA_HOST=${PMA_HOST}
-PMA_DB_PORT=${PMA_DB_PORT}
+DB_HOST=${DB_HOST}
+DB_PORT=${DB_PORT}
 PMA_ARBITRARY=${PMA_ARBITRARY}
 DB_NETWORK=${DB_NETWORK}
 ENV
 
 cat > aDespliegue/.env <<ENV
 PMA_PORT=${PMA_PORT}
-PMA_HOST=${PMA_HOST}
-PMA_DB_PORT=${PMA_DB_PORT}
+DB_HOST=${DB_HOST}
+DB_PORT=${DB_PORT}
 PMA_ARBITRARY=${PMA_ARBITRARY}
 DB_NETWORK=${DB_NETWORK}
 ENV
@@ -150,7 +150,7 @@ step "Generando Makefile"
 cat > Makefile <<MAKE
 .PHONY: help logs sh up down
 
-PMA_SERVICE = ${PROJECT_SLUG}_prod
+PMA_SERVICE = ${PROJECT_SLUG}
 
 help:
 	@echo "Comandos disponibles:"
@@ -220,11 +220,11 @@ echo "    make up"
 echo ""
 echo "  Acceso Web:"
 echo "    URL:         http://localhost:${PMA_PORT}"
-echo "    Host MySQL:  ${PMA_HOST}"
+echo "    Host MySQL:  ${DB_HOST}"
 if [[ -n "$DB_NETWORK" ]]; then
   echo "    Red Docker:  ${DB_NETWORK} (externa)"
 fi
-echo "    Port MySQL:  ${PMA_DB_PORT}"
+echo "    Port MySQL:  ${DB_PORT}"
 echo ""
 echo "  Comandos:"
 echo "    make up    → iniciar phpMyAdmin"

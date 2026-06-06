@@ -109,7 +109,7 @@ cat > aDespliegue/docker-compose.yml <<YAML
 services:
   ${PROJECT_SLUG}:
     image: mysql:${MYSQL_VERSION}
-    container_name: ${PROJECT_SLUG}_prod
+    container_name: ${PROJECT_SLUG}
     restart: unless-stopped
     env_file: .env
     environment:
@@ -164,7 +164,7 @@ step "Generando Makefile"
 cat > Makefile <<MAKE
 .PHONY: help up down logs sh mysql mysql-root backup restore
 
-MYSQL_SERVICE = ${PROJECT_SLUG}_prod
+MYSQL_SERVICE = ${PROJECT_SLUG}
 
 help:
 	@echo "Comandos disponibles:"
