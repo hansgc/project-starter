@@ -65,42 +65,32 @@ if [[ -n "$CONFIG_FILE" ]]; then
     PROJECT_NAME="pma-project"
   fi
 
-  PMA_PORT_DEV="${PMA_PORT_DEV:-${PMA_PORT:-8081}}"
-  PMA_PORT_PROD="${PMA_PORT_PROD:-80}"
+  PMA_PORT="${PMA_PORT:-8021}"
   PROD_SERVER_IP="${PROD_SERVER_IP:-}"
-  PMA_HOST="${PMA_HOST:-}"
-  PMA_HOST_DEV="${PMA_HOST_DEV:-${PMA_HOST:-host.docker.internal}}"
-  PMA_HOST_PROD="${PMA_HOST_PROD:-${PMA_HOST:-host.docker.internal}}"
-  PMA_DB_PORT_DEV="${PMA_DB_PORT_DEV:-3306}"
-  PMA_DB_PORT_PROD="${PMA_DB_PORT_PROD:-3306}"
+  PMA_HOST="${PMA_HOST:-host.docker.internal}"
+  PMA_DB_PORT="${PMA_DB_PORT:-3306}"
   PMA_ARBITRARY="${PMA_ARBITRARY:-1}"
   DB_NETWORK="${DB_NETWORK:-}"
-  DB_NETWORK_DEV="${DB_NETWORK_DEV:-}"
-  DB_NETWORK_PROD="${DB_NETWORK_PROD:-}"
 
 PROJECT_SLUG=$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')
-# Si no se definieron directamente, calcularlas desde DB_NETWORK
+# Si no se definió directamente, calcularla desde DB_NETWORK
 DB_NETWORK="${DB_NETWORK:-${PROJECT_SLUG}_net}"
-DB_NETWORK_DEV="${DB_NETWORK_DEV:-${DB_NETWORK}_dev}"
-DB_NETWORK_PROD="${DB_NETWORK_PROD:-${DB_NETWORK}_prod}"
 
-# --- Verificar redes Docker ---
-step "Verificando redes Docker"
-for network in "$DB_NETWORK_DEV" "$DB_NETWORK_PROD"; do
-  if ! verificar_red_docker "$network"; then
-    echo "  ⚠ La red Docker '$network' no existe."
-    echo "  Creando red automáticamente..."
-    if crear_red_docker "$network"; then
-      echo "  ✓ Red '$network' creada."
-    else
-      echo "  ❌ No se pudo crear la red '$network'. Por favor, créala manualmente con:"
-      echo "     docker network create $network"
-      exit 1
-    fi
+# --- Verificar red Docker ---
+step "Verificando red Docker"
+if ! verificar_red_docker "$DB_NETWORK"; then
+  echo "  ⚠ La red Docker '$DB_NETWORK' no existe."
+  echo "  Creando red automáticamente..."
+  if crear_red_docker "$DB_NETWORK"; then
+    echo "  ✓ Red '$DB_NETWORK' creada."
   else
-    echo "  ✓ La red '$network' existe."
+    echo "  ❌ No se pudo crear la red '$DB_NETWORK'. Por favor, créala manualmente con:"
+    echo "     docker network create $DB_NETWORK"
+    exit 1
   fi
-done
+else
+  echo "  ✓ La red '$DB_NETWORK' existe."
+fi
 
 # --- Crear estructura de directorios ---
 step "Creando estructura de directorios"
@@ -108,43 +98,14 @@ step "Creando estructura de directorios"
 mkdir -p "$PROJECT_SLUG"
 cd "$PROJECT_SLUG"
 
-mkdir -p aDespliegue/dev
-mkdir -p aDespliegue/prod
+mkdir -p aDespliegue
 
-# --- aDespliegue/dev/docker-compose.yml ---
-step "Generando docker-compose.yml dev"
+# --- aDespliegue/docker-compose.yml ---
+step "Generando docker-compose.yml"
 
-cat > aDespliegue/dev/docker-compose.yml <<YAML
+cat > aDespliegue/docker-compose.yml <<YAML
 services:
-  ${PROJECT_SLUG}_dev:
-    image: phpmyadmin:latest
-    container_name: ${PROJECT_SLUG}_dev
-    restart: "no"
-    env_file: .env
-    environment:
-      PMA_HOST: "\${PMA_HOST}"
-      PMA_PORT: "\${PMA_DB_PORT}"
-      PMA_ARBITRARY: "\${PMA_ARBITRARY}"
-      PMA_ABSOLUTE_URI: "http://localhost:\${PMA_PORT_DEV}/"
-    ports:
-      - "\${PMA_PORT_DEV}:80"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    networks:
-      - db_network
-
-networks:
-  db_network:
-    name: "\${DB_NETWORK_DEV}"
-    external: true
-YAML
-
-# --- aDespliegue/prod/docker-compose.yml ---
-step "Generando docker-compose.yml prod"
-
-cat > aDespliegue/prod/docker-compose.yml <<YAML
-services:
-  ${PROJECT_SLUG}_prod:
+  ${PROJECT_SLUG}:
     image: phpmyadmin:latest
     container_name: ${PROJECT_SLUG}_prod
     restart: unless-stopped
@@ -153,9 +114,9 @@ services:
       PMA_HOST: "\${PMA_HOST}"
       PMA_PORT: "\${PMA_DB_PORT}"
       PMA_ARBITRARY: "\${PMA_ARBITRARY}"
-      PMA_ABSOLUTE_URI: "http://localhost:\${PMA_PORT_PROD}/"
+      PMA_ABSOLUTE_URI: "http://localhost:\${PMA_PORT}/"
     ports:
-      - "\${PMA_PORT_PROD}:80"
+      - "\${PMA_PORT}:80"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
@@ -163,109 +124,79 @@ services:
 
 networks:
   db_network:
-    name: "\${DB_NETWORK_PROD}"
+    name: "\${DB_NETWORK}"
     external: true
 YAML
 
-cat > aDespliegue/dev/.env.example <<ENV
-PMA_PORT_DEV=${PMA_PORT_DEV}
-PMA_HOST=${PMA_HOST_DEV}
-PMA_DB_PORT=${PMA_DB_PORT_DEV}
+cat > aDespliegue/.env.example <<ENV
+PMA_PORT=${PMA_PORT}
+PMA_HOST=${PMA_HOST}
+PMA_DB_PORT=${PMA_DB_PORT}
 PMA_ARBITRARY=${PMA_ARBITRARY}
-DB_NETWORK_DEV=${DB_NETWORK_DEV}
+DB_NETWORK=${DB_NETWORK}
 ENV
 
-cat > aDespliegue/dev/.env <<ENV
-PMA_PORT_DEV=${PMA_PORT_DEV}
-PMA_HOST=${PMA_HOST_DEV}
-PMA_DB_PORT=${PMA_DB_PORT_DEV}
+cat > aDespliegue/.env <<ENV
+PMA_PORT=${PMA_PORT}
+PMA_HOST=${PMA_HOST}
+PMA_DB_PORT=${PMA_DB_PORT}
 PMA_ARBITRARY=${PMA_ARBITRARY}
-DB_NETWORK_DEV=${DB_NETWORK_DEV}
-ENV
-
-cat > aDespliegue/prod/.env.example <<ENV
-PMA_PORT_PROD=${PMA_PORT_PROD}
-PROD_SERVER_IP=
-PMA_HOST=${PMA_HOST_PROD}
-PMA_DB_PORT=${PMA_DB_PORT_PROD}
-PMA_ARBITRARY=${PMA_ARBITRARY}
-DB_NETWORK_PROD=${DB_NETWORK_PROD}
-ENV
-
-cat > aDespliegue/prod/.env <<ENV
-PMA_PORT_PROD=${PMA_PORT_PROD}
-PROD_SERVER_IP=${PROD_SERVER_IP}
-PMA_HOST=${PMA_HOST_PROD}
-PMA_DB_PORT=${PMA_DB_PORT_PROD}
-PMA_ARBITRARY=${PMA_ARBITRARY}
-DB_NETWORK_PROD=${DB_NETWORK_PROD}
+DB_NETWORK=${DB_NETWORK}
 ENV
 
 # --- Generando Makefile ---
 step "Generando Makefile"
 
 cat > Makefile <<MAKE
-.PHONY: help logs sh up-dev down-dev up-prod down-prod
+.PHONY: help logs sh up down
 
-PMA_SERVICE_dev = ${PROJECT_SLUG}_dev
-PMA_SERVICE_prod = ${PROJECT_SLUG}_prod
+PMA_SERVICE = ${PROJECT_SLUG}_prod
 
 help:
 	@echo "Comandos disponibles:"
-	@echo "  make help             - Muestra esta ayuda"
-	@echo "  make up-{dev|prod}    - Levanta el ambiente de desarrollo/producción"
-	@echo "  make down-{dev|prod}  - Detiene el ambiente de desarrollo/producción"
-	@echo "  make logs-{dev|prod}  - Muestra los logs en tiempo real"
-	@echo "  make sh-{dev|prod}    - Accede al shell del contenedor phpMyAdmin"
+	@echo "  make help  - Muestra esta ayuda"
+	@echo "  make up    - Levanta phpMyAdmin"
+	@echo "  make down  - Detiene phpMyAdmin"
+	@echo "  make logs  - Muestra los logs en tiempo real"
+	@echo "  make sh    - Accede al shell del contenedor phpMyAdmin"
 
-up-dev:
-	cd aDespliegue/dev && docker compose up -d
+up:
+	cd aDespliegue && docker compose up -d
 
-down-dev:
-	cd aDespliegue/dev && docker compose down
+down:
+	cd aDespliegue && docker compose down
 
-up-prod:
-	cd aDespliegue/prod && docker compose up -d
+logs:
+	cd aDespliegue && docker compose logs -f
 
-down-prod:
-	cd aDespliegue/prod && docker compose down
-
-logs-dev:
-	cd aDespliegue/dev && docker compose logs -f
-
-logs-prod:
-	cd aDespliegue/prod && docker compose logs -f
-
-sh-dev:
-	cd aDespliegue/dev && docker compose exec \${PMA_SERVICE_dev} sh
-
-sh-prod:
-	cd aDespliegue/prod && docker compose exec \${PMA_SERVICE_prod} sh
+sh:
+	cd aDespliegue && docker compose exec \${PMA_SERVICE} sh
 MAKE
 
 # --- Generando .gitignore ---
 step "Generando .gitignore"
 
 cat > .gitignore <<GIT
-aDespliegue/dev/.env
-aDespliegue/prod/.env
+aDespliegue/.env
 GIT
 
 # --- Generando leeme.txt ---
 step "Generando leeme.txt"
 
 {
-  echo "desarrollo:"
-  echo "-----------"
-  echo "make up"
-  echo "http://localhost:${PMA_PORT_DEV}"
+  echo "Para levantar phpMyAdmin:"
+  echo "  make up"
   echo ""
-  echo "producción:"
-  echo "-----------"
+  echo "Para detener phpMyAdmin:"
+  echo "  make down"
+  echo ""
+  echo "Para ver logs:"
+  echo "  make logs"
+  echo ""
   if [[ -n "${PROD_SERVER_IP}" ]]; then
-    echo "http://${PROD_SERVER_IP}:${PMA_PORT_PROD}"
+    echo "Acceso: http://${PROD_SERVER_IP}:${PMA_PORT}"
   else
-    echo "http://localhost:${PMA_PORT_PROD}"
+    echo "Acceso: http://localhost:${PMA_PORT}"
   fi
 } > leeme.txt
 
@@ -276,10 +207,9 @@ echo "╚═══════════════════════�
 echo ""
 echo "  Estructura creada:"
 echo "    ${PROJECT_SLUG}/"
-echo "    ├── aDespliegue/dev/docker-compose.yml"
-echo "    ├── aDespliegue/dev/.env"
-echo "    ├── aDespliegue/prod/docker-compose.yml"
-echo "    ├── aDespliegue/prod/.env"
+echo "    ├── aDespliegue/docker-compose.yml"
+echo "    ├── aDespliegue/.env"
+echo "    ├── aDespliegue/.env.example"
 echo "    ├── Makefile"
 echo "    ├── leeme.txt"
 echo "    └── .gitignore"
@@ -289,19 +219,17 @@ echo "    cd ${PROJECT_SLUG}"
 echo "    make up"
 echo ""
 echo "  Acceso Web:"
-echo "    URL dev:     http://localhost:${PMA_PORT_DEV}"
-echo "    URL prod:    http://localhost:${PMA_PORT_PROD}"
+echo "    URL:         http://localhost:${PMA_PORT}"
 echo "    Host MySQL:  ${PMA_HOST}"
 if [[ -n "$DB_NETWORK" ]]; then
   echo "    Red Docker:  ${DB_NETWORK} (externa)"
 fi
-echo "    Port MySQL dev:  ${PMA_DB_PORT_DEV}"
-echo "    Port MySQL prod: ${PMA_DB_PORT_PROD}"
+echo "    Port MySQL:  ${PMA_DB_PORT}"
 echo ""
 echo "  Comandos:"
-echo "    make up-{dev|prod}    → iniciar phpMyAdmin"
-echo "    make down-{dev|prod}  → detener phpMyAdmin"
-echo "    make logs-{dev|prod}  → ver logs en tiempo real"
+echo "    make up    → iniciar phpMyAdmin"
+echo "    make down  → detener phpMyAdmin"
+echo "    make logs  → ver logs en tiempo real"
 echo ""
 
 fi

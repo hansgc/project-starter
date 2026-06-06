@@ -66,48 +66,33 @@ if [[ -n "$CONFIG_FILE" ]]; then
   fi
 
   MYSQL_VERSION="${MYSQL_VERSION:-8.0}"
-  MYSQL_PORT_DEV="${MYSQL_PORT_DEV:-${MYSQL_PORT:-3306}}"
-  MYSQL_PORT_PROD="${MYSQL_PORT_PROD:-3306}"
+  MYSQL_PORT="${MYSQL_PORT:-3322}"
   PROD_SERVER_IP="${PROD_SERVER_IP:-}"
-  DB_NAME="${DB_NAME:-}"
-  DB_NAME_DEV="${DB_NAME_DEV:-${DB_NAME:-app_db}}"
-  DB_NAME_PROD="${DB_NAME_PROD:-${DB_NAME:-app_db}}"
-  DB_USER="${DB_USER:-}"
-  DB_USER_DEV="${DB_USER_DEV:-${DB_USER:-app_user}}"
-  DB_USER_PROD="${DB_USER_PROD:-${DB_USER:-app_user}}"
-  DB_PASSWORD="${DB_PASSWORD:-}"
-  DB_PASSWORD_DEV="${DB_PASSWORD_DEV:-${DB_PASSWORD:-secret_password}}"
-  DB_PASSWORD_PROD="${DB_PASSWORD_PROD:-${DB_PASSWORD:-secret_password}}"
-  DB_ROOT_PASSWORD="${DB_ROOT_PASSWORD:-}"
-  DB_ROOT_PASSWORD_DEV="${DB_ROOT_PASSWORD_DEV:-${DB_ROOT_PASSWORD:-secret_root_password}}"
-  DB_ROOT_PASSWORD_PROD="${DB_ROOT_PASSWORD_PROD:-${DB_ROOT_PASSWORD:-secret_root_password}}"
+  DB_NAME="${DB_NAME:-app_db}"
+  DB_USER="${DB_USER:-app_user}"
+  DB_PASSWORD="${DB_PASSWORD:-secret_password}"
+  DB_ROOT_PASSWORD="${DB_ROOT_PASSWORD:-secret_root_password}"
   DB_NETWORK="${DB_NETWORK:-}"
-  DB_NETWORK_DEV="${DB_NETWORK_DEV:-}"
-  DB_NETWORK_PROD="${DB_NETWORK_PROD:-}"
 
 PROJECT_SLUG=$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')
-# Si no se definieron directamente, calcularlas desde DB_NETWORK
+# Si no se definió directamente, calcularla desde DB_NETWORK
 DB_NETWORK="${DB_NETWORK:-${PROJECT_SLUG}_net}"
-DB_NETWORK_DEV="${DB_NETWORK_DEV:-${DB_NETWORK}_dev}"
-DB_NETWORK_PROD="${DB_NETWORK_PROD:-${DB_NETWORK}_prod}"
 
-# --- Verificar redes Docker ---
-step "Verificando redes Docker"
-for network in "$DB_NETWORK_DEV" "$DB_NETWORK_PROD"; do
-  if ! verificar_red_docker "$network"; then
-    echo "  ⚠ La red Docker '$network' no existe."
-    echo "  Creando red automáticamente..."
-    if crear_red_docker "$network"; then
-      echo "  ✓ Red '$network' creada."
-    else
-      echo "  ❌ No se pudo crear la red '$network'. Por favor, créala manualmente con:"
-      echo "     docker network create $network"
-      exit 1
-    fi
+# --- Verificar red Docker ---
+step "Verificando red Docker"
+if ! verificar_red_docker "$DB_NETWORK"; then
+  echo "  ⚠ La red Docker '$DB_NETWORK' no existe."
+  echo "  Creando red automáticamente..."
+  if crear_red_docker "$DB_NETWORK"; then
+    echo "  ✓ Red '$DB_NETWORK' creada."
   else
-    echo "  ✓ La red '$network' existe."
+    echo "  ❌ No se pudo crear la red '$DB_NETWORK'. Por favor, créala manualmente con:"
+    echo "     docker network create $DB_NETWORK"
+    exit 1
   fi
-done
+else
+  echo "  ✓ La red '$DB_NETWORK' existe."
+fi
 
 # --- Crear estructura de directorios ---
 step "Creando estructura de directorios"
@@ -115,48 +100,14 @@ step "Creando estructura de directorios"
 mkdir -p "$PROJECT_SLUG"
 cd "$PROJECT_SLUG"
 
-mkdir -p aDespliegue/dev
-mkdir -p aDespliegue/prod
+mkdir -p aDespliegue
 
-# --- aDespliegue/dev/docker-compose.yml ---
-step "Generando docker-compose.yml dev"
+# --- aDespliegue/docker-compose.yml ---
+step "Generando docker-compose.yml"
 
-cat > aDespliegue/dev/docker-compose.yml <<YAML
+cat > aDespliegue/docker-compose.yml <<YAML
 services:
-  ${PROJECT_SLUG}_dev:
-    image: mysql:${MYSQL_VERSION}
-    container_name: ${PROJECT_SLUG}_dev
-    restart: "no"
-    env_file: .env
-    environment:
-      MYSQL_ROOT_PASSWORD: "\${DB_ROOT_PASSWORD}"
-      MYSQL_DATABASE: "\${DB_NAME}"
-      MYSQL_USER: "\${DB_USER}"
-      MYSQL_PASSWORD: "\${DB_PASSWORD}"
-    ports:
-      - "\${MYSQL_PORT_DEV}:3306"
-    volumes:
-      - ${PROJECT_SLUG}_data:/var/lib/mysql
-    networks:
-      - db_network
-
-
-volumes:
-  ${PROJECT_SLUG}_data:
-    name: ${PROJECT_SLUG}_data
-
-networks:
-  db_network:
-    name: "\${DB_NETWORK_DEV}"
-    external: true
-YAML
-
-# --- aDespliegue/prod/docker-compose.yml ---
-step "Generando docker-compose.yml prod"
-
-cat > aDespliegue/prod/docker-compose.yml <<YAML
-services:
-  ${PROJECT_SLUG}_prod:
+  ${PROJECT_SLUG}:
     image: mysql:${MYSQL_VERSION}
     container_name: ${PROJECT_SLUG}_prod
     restart: unless-stopped
@@ -167,19 +118,19 @@ services:
       MYSQL_USER: "\${DB_USER}"
       MYSQL_PASSWORD: "\${DB_PASSWORD}"
     ports:
-      - "\${MYSQL_PORT_PROD}:3306"
+      - "\${MYSQL_PORT}:3306"
     volumes:
-      - ${PROJECT_SLUG}_data_prod:/var/lib/mysql
+      - ${PROJECT_SLUG}_data:/var/lib/mysql
     networks:
       - db_network
 
 volumes:
-  ${PROJECT_SLUG}_data_prod:
-    name: ${PROJECT_SLUG}_data_prod
+  ${PROJECT_SLUG}_data:
+    name: ${PROJECT_SLUG}_data
 
 networks:
   db_network:
-    name: "\${DB_NETWORK_PROD}"
+    name: "\${DB_NETWORK}"
     external: true
 YAML
 
@@ -187,118 +138,71 @@ YAML
 # --- Generando .env y .env.example ---
 step "Generando variables de entorno (.env)"
 
-cat > aDespliegue/dev/.env.example <<ENV
+cat > aDespliegue/.env.example <<ENV
 MYSQL_VERSION=${MYSQL_VERSION}
-MYSQL_PORT_DEV=${MYSQL_PORT_DEV}
-DB_NAME=${DB_NAME_DEV}
-DB_USER=${DB_USER_DEV}
+MYSQL_PORT=${MYSQL_PORT}
+DB_NAME=${DB_NAME}
+DB_USER=${DB_USER}
 DB_PASSWORD=YOUR_DB_PASSWORD
 DB_ROOT_PASSWORD=YOUR_ROOT_PASSWORD
-DB_NETWORK_DEV=${DB_NETWORK_DEV}
+DB_NETWORK=${DB_NETWORK}
 ENV
 
-cat > aDespliegue/dev/.env <<ENV
+cat > aDespliegue/.env <<ENV
 MYSQL_VERSION=${MYSQL_VERSION}
-MYSQL_PORT_DEV=${MYSQL_PORT_DEV}
-DB_NAME=${DB_NAME_DEV}
-DB_USER=${DB_USER_DEV}
-DB_PASSWORD=${DB_PASSWORD_DEV}
-DB_ROOT_PASSWORD=${DB_ROOT_PASSWORD_DEV}
-DB_NETWORK_DEV=${DB_NETWORK_DEV}
-ENV
-
-cat > aDespliegue/prod/.env.example <<ENV
-MYSQL_VERSION=${MYSQL_VERSION}
-MYSQL_PORT_PROD=${MYSQL_PORT_PROD}
-PROD_SERVER_IP=
-DB_NAME=${DB_NAME_PROD}
-DB_USER=${DB_USER_PROD}
-DB_PASSWORD=YOUR_DB_PASSWORD
-DB_ROOT_PASSWORD=YOUR_ROOT_PASSWORD
-DB_NETWORK_PROD=${DB_NETWORK_PROD}
-ENV
-
-cat > aDespliegue/prod/.env <<ENV
-MYSQL_VERSION=${MYSQL_VERSION}
-MYSQL_PORT_PROD=${MYSQL_PORT_PROD}
-PROD_SERVER_IP=${PROD_SERVER_IP}
-DB_NAME=${DB_NAME_PROD}
-DB_USER=${DB_USER_PROD}
-DB_PASSWORD=${DB_PASSWORD_PROD}
-DB_ROOT_PASSWORD=${DB_ROOT_PASSWORD_PROD}
-DB_NETWORK_PROD=${DB_NETWORK_PROD}
+MYSQL_PORT=${MYSQL_PORT}
+DB_NAME=${DB_NAME}
+DB_USER=${DB_USER}
+DB_PASSWORD=${DB_PASSWORD}
+DB_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
+DB_NETWORK=${DB_NETWORK}
 ENV
 
 # --- Generando Makefile ---
 step "Generando Makefile"
 
 cat > Makefile <<MAKE
-.PHONY: help start stop logs sh mysql mysql-root backup restore up-dev down-dev up-prod down-prod
+.PHONY: help up down logs sh mysql mysql-root backup restore
 
-MYSQL_SERVICE_dev = ${PROJECT_SLUG}_dev
-MYSQL_SERVICE_prod = ${PROJECT_SLUG}_prod
+MYSQL_SERVICE = ${PROJECT_SLUG}_prod
 
 help:
 	@echo "Comandos disponibles:"
-	@echo "  make help             - Muestra esta ayuda"
-	@echo "  make up-{dev|prod}    - Levanta el ambiente de desarrollo/producción"
-	@echo "  make down-{dev|prod}  - Detiene el ambiente de desarrollo/producción"
-	@echo "  make logs-{dev|prod}  - Muestra los logs en tiempo real"
-	@echo "  make sh-{dev|prod}    - Accede al shell del contenedor MySQL"
-	@echo "  make mysql-{dev|prod} - Accede a MySQL con usuario normal"
-	@echo "  make mysql-root-{dev|prod} - Accede a MySQL como root"
-	@echo "  make backup-{dev|prod} - Realiza un backup de la base de datos"
-	@echo "  make restore-{dev|prod} - Restaura un backup desde la carpeta backups/"
+	@echo "  make help        - Muestra esta ayuda"
+	@echo "  make up          - Levanta el contenedor MySQL"
+	@echo "  make down        - Detiene el contenedor MySQL"
+	@echo "  make logs        - Muestra los logs en tiempo real"
+	@echo "  make sh          - Accede al shell del contenedor MySQL"
+	@echo "  make mysql       - Accede a MySQL con usuario normal"
+	@echo "  make mysql-root  - Accede a MySQL como root"
+	@echo "  make backup      - Realiza un backup de la base de datos"
+	@echo "  make restore     - Restaura un backup desde la carpeta backups/"
 
-up-dev:
-	cd aDespliegue/dev && docker compose up -d
+up:
+	cd aDespliegue && docker compose up -d
 
-down-dev:
-	cd aDespliegue/dev && docker compose down
+down:
+	cd aDespliegue && docker compose down
 
-up-prod:
-	cd aDespliegue/prod && docker compose up -d
+logs:
+	cd aDespliegue && docker compose logs -f
 
-down-prod:
-	cd aDespliegue/prod && docker compose down
+sh:
+	cd aDespliegue && docker compose exec ${MYSQL_SERVICE} bash
 
-logs-dev:
-	cd aDespliegue/dev && docker compose logs -f
+mysql:
+	cd aDespliegue && docker compose exec ${MYSQL_SERVICE} sh -c 'mysql -u\$\$MYSQL_USER -p\$\$MYSQL_PASSWORD \$\$MYSQL_DATABASE'
 
-logs-prod:
-	cd aDespliegue/prod && docker compose logs -f
+mysql-root:
+	cd aDespliegue && docker compose exec ${MYSQL_SERVICE} sh -c 'mysql -uroot -p\$\$MYSQL_ROOT_PASSWORD \$\$MYSQL_DATABASE'
 
-sh-dev:
-	cd aDespliegue/dev && docker compose exec ${MYSQL_SERVICE_dev} bash
-
-sh-prod:
-	cd aDespliegue/prod && docker compose exec ${MYSQL_SERVICE_prod} bash
-
-mysql-dev:
-	cd aDespliegue/dev && docker compose exec ${MYSQL_SERVICE_dev} sh -c 'mysql -u\$\$MYSQL_USER -p\$\$MYSQL_PASSWORD \$\$MYSQL_DATABASE'
-
-mysql-prod:
-	cd aDespliegue/prod && docker compose exec ${MYSQL_SERVICE_prod} sh -c 'mysql -u\$\$MYSQL_USER -p\$\$MYSQL_PASSWORD \$\$MYSQL_DATABASE'
-
-mysql-root-dev:
-	cd aDespliegue/dev && docker compose exec ${MYSQL_SERVICE_dev} sh -c 'mysql -uroot -p\$\$MYSQL_ROOT_PASSWORD \$\$MYSQL_DATABASE'
-
-mysql-root-prod:
-	cd aDespliegue/prod && docker compose exec ${MYSQL_SERVICE_prod} sh -c 'mysql -uroot -p\$\$MYSQL_ROOT_PASSWORD \$\$MYSQL_DATABASE'
-
-backup-dev:
+backup:
 	@mkdir -p backups
 	@echo "Realizando copia de seguridad..."
-	cd aDespliegue/dev && docker compose exec -T ${MYSQL_SERVICE_dev} sh -c 'mysqldump -u\$\$MYSQL_USER -p\$\$MYSQL_PASSWORD \$\$MYSQL_DATABASE' > ../../backups/backup_\$\$(date +%Y%m%d_%H%M%S).sql
+	cd aDespliegue && docker compose exec -T ${MYSQL_SERVICE} sh -c 'mysqldump -u\$\$MYSQL_USER -p\$\$MYSQL_PASSWORD \$\$MYSQL_DATABASE' > ../../backups/backup_\$\$(date +%Y%m%d_%H%M%S).sql
 	@echo "Copia de seguridad guardada en backups/"
 
-backup-prod:
-	@mkdir -p backups
-	@echo "Realizando copia de seguridad..."
-	cd aDespliegue/prod && docker compose exec -T ${MYSQL_SERVICE_prod} sh -c 'mysqldump -u\$\$MYSQL_USER -p\$\$MYSQL_PASSWORD \$\$MYSQL_DATABASE' > ../../backups/backup_\$\$(date +%Y%m%d_%H%M%S).sql
-	@echo "Copia de seguridad guardada en backups/"
-
-restore-dev:
+restore:
 	@if [ ! -d backups ] || [ -z "\$\$(ls backups/*.sql 2>/dev/null)" ]; then \\
 		echo "No hay archivos de backup (.sql) en la carpeta backups/"; \\
 		exit 1; \\
@@ -308,24 +212,7 @@ restore-dev:
 	@read -p "Ingresa el nombre del archivo de backup a restaurar (ej: backups/backup_xxx.sql): " backup_file; \\
 	if [ -f "\$\$backup_file" ]; then \\
 		echo "Restaurando \$\$backup_file..."; \\
-		cd aDespliegue/dev && docker compose exec -T ${MYSQL_SERVICE_dev} sh -c 'mysql -u\$\$MYSQL_USER -p\$\$MYSQL_PASSWORD \$\$MYSQL_DATABASE' < ../../"\$\$backup_file"; \\
-		echo "Restauración completada con éxito."; \\
-	else \\
-		echo "El archivo '\$\$backup_file' no existe."; \\
-		exit 1; \\
-	fi
-
-restore-prod:
-	@if [ ! -d backups ] || [ -z "\$\$(ls backups/*.sql 2>/dev/null)" ]; then \\
-		echo "No hay archivos de backup (.sql) en la carpeta backups/"; \\
-		exit 1; \\
-	fi
-	@echo "Archivos disponibles:"
-	@ls -1 backups/*.sql
-	@read -p "Ingresa el nombre del archivo de backup a restaurar (ej: backups/backup_xxx.sql): " backup_file; \\
-	if [ -f "\$\$backup_file" ]; then \\
-		echo "Restaurando \$\$backup_file..."; \\
-		cd aDespliegue/prod && docker compose exec -T ${MYSQL_SERVICE_prod} sh -c 'mysql -u\$\$MYSQL_USER -p\$\$MYSQL_PASSWORD \$\$MYSQL_DATABASE' < ../../"\$\$backup_file"; \\
+		cd aDespliegue && docker compose exec -T ${MYSQL_SERVICE} sh -c 'mysql -u\$\$MYSQL_USER -p\$\$MYSQL_PASSWORD \$\$MYSQL_DATABASE' < ../../"\$\$backup_file"; \\
 		echo "Restauración completada con éxito."; \\
 	else \\
 		echo "El archivo '\$\$backup_file' no existe."; \\
@@ -337,8 +224,7 @@ MAKE
 step "Generando .gitignore"
 
 cat > .gitignore <<GIT
-aDespliegue/dev/.env
-aDespliegue/prod/.env
+aDespliegue/.env
 backups/
 GIT
 
@@ -346,17 +232,19 @@ GIT
 step "Generando leeme.txt"
 
 {
-  echo "desarrollo:"
-  echo "-----------"
-  echo "make up"
-  echo "localhost:${MYSQL_PORT_DEV}"
+  echo "Para levantar el contenedor:"
+  echo "  make up"
   echo ""
-  echo "producción:"
-  echo "-----------"
+  echo "Para detener el contenedor:"
+  echo "  make down"
+  echo ""
+  echo "Para ver logs:"
+  echo "  make logs"
+  echo ""
   if [[ -n "${PROD_SERVER_IP}" ]]; then
-    echo "${PROD_SERVER_IP}:${MYSQL_PORT_PROD}"
+    echo "Acceso MySQL: ${PROD_SERVER_IP}:${MYSQL_PORT}"
   else
-    echo "localhost:${MYSQL_PORT_PROD}"
+    echo "Acceso MySQL: localhost:${MYSQL_PORT}"
   fi
 } > leeme.txt
 
@@ -367,10 +255,9 @@ echo "╚═══════════════════════�
 echo ""
 echo "  Estructura creada:"
 echo "    ${PROJECT_SLUG}/"
-echo "    ├── aDespliegue/dev/docker-compose.yml"
-echo "    ├── aDespliegue/dev/.env"
-echo "    ├── aDespliegue/prod/docker-compose.yml"
-echo "    ├── aDespliegue/prod/.env"
+echo "    ├── aDespliegue/docker-compose.yml"
+echo "    ├── aDespliegue/.env"
+echo "    ├── aDespliegue/.env.example"
 echo "    ├── Makefile"
 echo "    ├── leeme.txt"
 echo "    └── .gitignore"
@@ -381,19 +268,20 @@ echo "    make up"
 echo ""
 echo "  Datos de Acceso:"
 echo "    Host:        localhost (desde tu máquina)"
-echo "    Puerto dev:  ${MYSQL_PORT_DEV}"
-echo "    Puerto prod: ${MYSQL_PORT_PROD}"
+echo "    Puerto:      ${MYSQL_PORT}"
 echo "    Database:    ${DB_NAME}"
 echo "    Usuario:     ${DB_USER}"
 echo "    Contraseña:  ${DB_PASSWORD}"
 echo "    ROOT Pass:   ${DB_ROOT_PASSWORD}"
 echo ""
 echo "  Comandos:"
-echo "    make up-{dev|prod}    → iniciar base de datos"
-echo "    make down-{dev|prod}  → detener base de datos"
-echo "    make mysql-{dev|prod} → consola interactiva MySQL"
-echo "    make backup-{dev|prod} → crear backup en backups/"
-echo "    make logs-{dev|prod}  → ver logs en tiempo real"
+echo "    make up          → iniciar base de datos"
+echo "    make down        → detener base de datos"
+echo "    make mysql       → consola interactiva MySQL"
+echo "    make mysql-root  → consola interactiva MySQL como root"
+echo "    make backup      → crear backup en backups/"
+echo "    make restore     → restaurar backup desde backups/"
+echo "    make logs        → ver logs en tiempo real"
 echo ""
 
 fi
