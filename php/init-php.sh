@@ -1022,12 +1022,6 @@ if [[ -d "$STUBS_DIR" ]]; then
     fi
   fi
 
-  if [[ -n "$BACKUP_CONTAINER_NAME" ]] && [[ -d "$STUBS_DIR/backup" ]]; then
-    [[ -d "$STUBS_DIR/backup/Entity" ]] && cp -r "$STUBS_DIR/backup/Entity" app/src/
-    [[ -d "$STUBS_DIR/backup/EventListener" ]] && cp -r "$STUBS_DIR/backup/EventListener" app/src/
-    [[ -d "$STUBS_DIR/backup/migrations" ]] && cp -r "$STUBS_DIR/backup/migrations/"*.php app/migrations/ 2>/dev/null || true
-    echo "  ✓ stubs/backup → app/src/ (Entity + EventListener + migrations)"
-  fi
 
 else
   echo "  (No se encontró el directorio stubs/, se omite este paso)"
@@ -1334,5 +1328,3 @@ fi
 echo ""
 echo "  En VSCode: Dev Containers: Reopen in Container"
 echo ""
-
-fi

@@ -241,14 +241,14 @@ services:
     volumes:
       - backup_data:/backups
     networks:
-      - "\${DB_NETWORK}"
+      - db_network
 
 volumes:
   backup_data:
 
 networks:
-  \${DB_NETWORK}:
-    name: "\${DB_NETWORK}"
+  db_network:
+    name: "${DB_NETWORK}"
     external: true
 YAML
 
@@ -489,6 +489,19 @@ log "Verificando conexión a MySQL..."
 if ! mysql --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USER" --password="$DB_PASS" -e "SELECT 1;" > /dev/null 2>&1; then
     log "ERROR: No hay conexión a MySQL."
     exit 1
+fi
+log "Verificando tabla backup_auditoria..."
+if ! mysql --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USER" --password="$DB_PASS" -e "DESCRIBE backup_auditoria;" > /dev/null 2>&1; then
+  log "Tabla backup_auditoria no existe. Creándola..."
+  mysql --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USER" --password="$DB_PASS" -e "CREATE TABLE IF NOT EXISTS backup_auditoria (id INT AUTO_INCREMENT PRIMARY KEY, ultima_transaccion DATETIME DEFAULT NULL, ultimo_backup DATETIME DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;" > /dev/null 2>&1
+  if [ $? -eq 0 ]; then
+    log "Tabla backup_auditoria creada exitosamente."
+  else
+    log "ERROR: No se pudo crear la tabla backup_auditoria."
+    exit 1
+  fi
+else
+  log "Tabla backup_auditoria existe."
 fi
 
 if hubo_cambios; then
