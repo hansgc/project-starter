@@ -8,22 +8,6 @@ echo "║    Backup Docker Project Initializer     ║"
 echo "╚══════════════════════════════════════════╝"
 echo ""
 
-ask_yn() {
-  local label=$1
-  local default=${2:-n}
-  local hint=$([ "$default" = "s" ] && echo "[S/n]" || echo "[s/N]")
-  read -p "  $label $hint: " ans
-  ans=${ans:-$default}
-  [[ "$ans" =~ ^[sS]$ ]]
-}
-
-ask_input() {
-  local label=$1
-  local default=$2
-  read -p "$label [default: $default]: " val
-  echo "${val:-$default}"
-}
-
 mostrar_config_valores() {
   echo ""
   while IFS='=' read -r key value; do
@@ -39,6 +23,27 @@ mostrar_config_valores() {
 step() {
   echo ""
   echo "$1"
+}
+
+verificar_red_docker() {
+  local network_name=$1
+  if docker network inspect "$network_name" >/dev/null 2>&1; then
+    return 0  # La red existe
+  else
+    return 1  # La red NO existe
+  fi
+}
+
+crear_red_docker() {
+  local network_name=$1
+  echo "Creando red Docker: $network_name"
+  if docker network create "$network_name" >/dev/null 2>&1; then
+    echo "  ✓ Red '$network_name' creada exitosamente."
+    return 0
+  else
+    echo "  ❌ Error al crear la red '$network_name'."
+    return 1
+  fi
 }
 
 CONFIG_FILE="${1:-}"
@@ -117,7 +122,6 @@ if [[ -n "$CONFIG_FILE" ]]; then
   fi
 
   echo "Leyendo configuración desde: $CONFIG_FILE"
-
   CONFIG_BASENAME=$(basename "$CONFIG_FILE" .conf)
   PROJECT_NAME=${CONFIG_BASENAME#project_}
   PROJECT_NAME=${PROJECT_NAME#backup_}
@@ -133,6 +137,7 @@ if [[ -n "$CONFIG_FILE" ]]; then
     value=$(echo "$value" | tr -d '"' | tr -d "'" | sed 's/[[:space:]]*#.*//' | xargs)
     declare "$key=$value"
   done < "$CONFIG_FILE"
+  echo ""
 
   DB_HOST="${DB_HOST:-mysql}"
   DB_PORT="${DB_PORT:-3306}"
@@ -141,44 +146,37 @@ if [[ -n "$CONFIG_FILE" ]]; then
   DB_PASS="${DB_PASS:-secret_password}"
   CLIENTE_ID="${CLIENTE_ID:-mi-cliente}"
   DB_NETWORK="${DB_NETWORK:-app_network}"
+
+  PROJECT_SLUG=$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
+  PROJECT_FOLDER="${PROJECT_SLUG}-backup"
+
+  # Si no se definió directamente, calcularla desde DB_NETWORK
+  DB_NETWORK="${DB_NETWORK:-app_network}"
+
   B2_KEY_ID="${B2_KEY_ID:-}"
   B2_APP_KEY="${B2_APP_KEY:-}"
   B2_BUCKET="${B2_BUCKET:-backup-cliente}"
   BACKUP_SCHEDULE="${BACKUP_SCHEDULE:-0 * * * *}"
-  PORT_DEV="${PORT_DEV:-8080}"
-  PORT_PROD="${PORT_PROD:-80}"
   PROD_SERVER_IP="${PROD_SERVER_IP:-}"
-
   mostrar_config_valores
-else
-  echo "Tip: podés crear un archivo .conf y correr: init-backup.sh mi-proyecto.conf"
-  echo ""
 
-  read -p "Nombre del proyecto: " PROJECT_NAME
-  if [[ -z "$PROJECT_NAME" ]]; then
-    echo "Error: el nombre no puede estar vacío.";
+# --- Verificar red Docker ---
+step "Verificando red Docker"
+if ! verificar_red_docker "$DB_NETWORK"; then
+  echo "  ⚠ La red Docker '$DB_NETWORK' no existe."
+  echo "  Creando red automáticamente..."
+  if crear_red_docker "$DB_NETWORK"; then
+    echo "  ✓ Red '$DB_NETWORK' creada."
+  else
+    echo "  ❌ No se pudo crear la red '$DB_NETWORK'. Por favor, créala manualmente con:"
+    echo "     docker network create $DB_NETWORK"
     exit 1
   fi
-
-  step "Configuración de Base de Datos"
-  DB_HOST=$(ask_input "Host o nombre del contenedor MySQL" "mysql")
-  DB_PORT=$(ask_input "Puerto de MySQL" "3306")
-  DB_NAME=$(ask_input "Nombre de la base de datos" "app_db")
-  DB_USER=$(ask_input "Usuario de MySQL" "app_user")
-  DB_PASS=$(ask_input "Contraseña de MySQL" "secret_password")
-
-  step "Configuración de Backblaze B2"
-  CLIENTE_ID=$(ask_input "ID del cliente (para organización interna)" "mi-cliente")
-  DB_NETWORK=$(ask_input "Nombre de la red Docker de MySQL" "app_network")
-  B2_KEY_ID=$(ask_input "Backblaze B2 Key ID" "")
-  B2_APP_KEY=$(ask_input "Backblaze B2 Application Key" "")
-  B2_BUCKET=$(ask_input "Backblaze B2 Bucket" "backup-cliente")
-
-  step "Configuración de Cron"
-  BACKUP_SCHEDULE=$(ask_input "Expresión cron para ejecutar backups" "0 * * * *")
+else
+  echo "  ✓ La red '$DB_NETWORK' existe."
 fi
 
-step "Verificando red y conexión a MySQL"
+step "Verificando conexión a MySQL"
 if ! probar_mysql_network; then
   echo "ERROR: No se puede continuar sin una conexión funcional a MySQL en la red Docker especificada."
   exit 1
@@ -190,21 +188,18 @@ if ! probar_backblaze_b2; then
   exit 1
 fi
 
-PROJECT_SLUG=$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
-PROJECT_FOLDER="${PROJECT_SLUG}-backup"
-
 step "Creando estructura de directorios"
 
 mkdir -p "$PROJECT_FOLDER"
 cd "$PROJECT_FOLDER"
 
 mkdir -p .devcontainer
-mkdir -p aDespliegue/dev
+mkdir -p aDespliegue
 mkdir -p app
 
 step "Generando Dockerfile"
 
-cat > aDespliegue/dev/Dockerfile <<'DOCKERFILE'
+cat > aDespliegue/Dockerfile <<'DOCKERFILE'
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y \
@@ -233,29 +228,27 @@ DOCKERFILE
 
 step "Generando docker-compose.yml"
 
-cat > aDespliegue/dev/docker-compose.yml <<YAML
+cat > aDespliegue/docker-compose.yml <<YAML
 services:
   backup:
     build:
-      context: ../..
-      dockerfile: aDespliegue/dev/Dockerfile
-    container_name: ${PROJECT_SLUG}-backup-dev
-    image: ${PROJECT_SLUG}-backup-dev
-    env_file: ../../.env
-    ports:
-      - "${PORT_DEV}:${PORT_DEV}"
+      context: ..
+      dockerfile: aDespliegue/Dockerfile
+    container_name: ${PROJECT_SLUG}-backup
+    image: ${PROJECT_SLUG}-backup
+    restart: unless-stopped
+    env_file: .env
     volumes:
-      - ../../:/workspace:cached
       - backup_data:/backups
     networks:
-      - ${DB_NETWORK}
-    restart: unless-stopped
+      - db_network
 
 volumes:
   backup_data:
 
 networks:
-  ${DB_NETWORK}:
+  db_network:
+    name: "${DB_NETWORK}"
     external: true
 YAML
 
@@ -264,7 +257,7 @@ step "Generando .devcontainer"
 cat > .devcontainer/devcontainer.json <<JSON
 {
   "name": "${PROJECT_NAME} Backup",
-  "dockerComposeFile": ["../aDespliegue/dev/docker-compose.yml"],
+  "dockerComposeFile": ["../aDespliegue/docker-compose.yml"],
   "service": "backup",
   "workspaceFolder": "/workspace",
   "remoteUser": "root",
@@ -281,7 +274,7 @@ JSON
 
 step "Generando variables de entorno (.env)"
 
-cat > .env.example <<ENV
+cat > aDespliegue/.env.example <<ENV
 # Configuración de MySQL
 # Aquí puedes usar el nombre del contenedor MySQL dentro de la red Docker compartida.
 DB_HOST=${DB_HOST}
@@ -301,18 +294,11 @@ B2_KEY_ID=YOUR_B2_KEY_ID
 B2_APP_KEY=YOUR_B2_APP_KEY
 B2_BUCKET=${B2_BUCKET}
 
-# Puertos
-PORT_DEV=8080
-PORT_PROD=80
-
-# Servidor de producción (opcional)
-PROD_SERVER_IP=
-
 # Schedule de Cron (expresión cron)
 BACKUP_SCHEDULE=${BACKUP_SCHEDULE}
 ENV
 
-cat > .env <<ENV
+cat > aDespliegue/.env <<ENV
 # Configuración de MySQL
 DB_HOST=${DB_HOST}
 DB_PORT=${DB_PORT}
@@ -330,13 +316,6 @@ CLIENTE_ID=${CLIENTE_ID}
 B2_KEY_ID=${B2_KEY_ID}
 B2_APP_KEY=${B2_APP_KEY}
 B2_BUCKET=${B2_BUCKET}
-
-# Puertos
-PORT_DEV=${PORT_DEV}
-PORT_PROD=${PORT_PROD}
-
-# Servidor de producción (opcional)
-PROD_SERVER_IP=${PROD_SERVER_IP}
 
 # Schedule de Cron (expresión cron)
 BACKUP_SCHEDULE=${BACKUP_SCHEDULE}
@@ -511,6 +490,19 @@ if ! mysql --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USER" --password="$DB
     log "ERROR: No hay conexión a MySQL."
     exit 1
 fi
+log "Verificando tabla backup_auditoria..."
+if ! mysql --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USER" --password="$DB_PASS" -e "DESCRIBE backup_auditoria;" > /dev/null 2>&1; then
+  log "Tabla backup_auditoria no existe. Creándola..."
+  mysql --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USER" --password="$DB_PASS" -e "CREATE TABLE IF NOT EXISTS backup_auditoria (id INT AUTO_INCREMENT PRIMARY KEY, ultima_transaccion DATETIME DEFAULT NULL, ultimo_backup DATETIME DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;" > /dev/null 2>&1
+  if [ $? -eq 0 ]; then
+    log "Tabla backup_auditoria creada exitosamente."
+  else
+    log "ERROR: No se pudo crear la tabla backup_auditoria."
+    exit 1
+  fi
+else
+  log "Tabla backup_auditoria existe."
+fi
 
 if hubo_cambios; then
     log "Cambios detectados en la base de datos."
@@ -530,36 +522,43 @@ chmod +x app/backup.sh
 step "Generando Makefile"
 
 cat > Makefile <<'MAKE'
-.PHONY: up down start stop logs logs-backup sh backup-now backup-logs
+.PHONY: help logs logs-backup sh backup-now backup-logs up down build
 
-ENV_DIR = aDespliegue/dev
-include .env
-export
+help:
+	@echo "Comandos disponibles:"
+	@echo "  make help         - Muestra esta ayuda"
+	@echo "  make up           - Levanta el contenedor de backup"
+	@echo "  make down         - Detiene el contenedor de backup"
+	@echo "  make build        - Reconstruye el contenedor de backup"
+	@echo "  make logs         - Muestra los logs en tiempo real"
+	@echo "  make logs-backup  - Muestra los logs del servicio backup"
+	@echo "  make sh           - Accede al shell del contenedor backup"
+	@echo "  make backup-now   - Ejecuta un backup inmediato"
+	@echo "  make backup-logs  - Muestra los logs de backup del contenedor"
 
 up:
-	docker compose --env-file .env -f $(ENV_DIR)/docker-compose.yml up -d
+	cd aDespliegue && docker compose up -d
 
 down:
-	docker compose --env-file .env -f $(ENV_DIR)/docker-compose.yml down
+	cd aDespliegue && docker compose down
 
-start: up
-
-stop: down
+build:
+	cd aDespliegue && docker compose build --no-cache
 
 logs:
-	docker compose --env-file .env -f $(ENV_DIR)/docker-compose.yml logs -f
+	cd aDespliegue && docker compose logs -f
 
 logs-backup:
-	docker compose --env-file .env -f $(ENV_DIR)/docker-compose.yml logs -f backup
+	cd aDespliegue && docker compose logs -f backup
 
 sh:
-	docker compose --env-file .env -f $(ENV_DIR)/docker-compose.yml exec backup bash
+	cd aDespliegue && docker compose exec backup bash
 
 backup-now:
-	docker compose --env-file .env -f $(ENV_DIR)/docker-compose.yml exec backup /usr/local/bin/backup.sh
+	cd aDespliegue && docker compose exec backup /usr/local/bin/backup.sh
 
 backup-logs:
-	docker compose --env-file .env -f $(ENV_DIR)/docker-compose.yml exec backup tail -f /var/log/backup.log
+	cd aDespliegue && docker compose exec backup tail -f /var/log/backup.log
 MAKE
 
 step "Generando README.md"
@@ -574,16 +573,16 @@ Sistema automático de backup de base de datos MySQL con envío directo a Backbl
 ```
 ${PROJECT_FOLDER}/
 ├── .devcontainer/
-├── aDespliegue/dev/
+├── aDespliegue/
 │   ├── docker-compose.yml
-│   └── Dockerfile
+│   ├── Dockerfile
+│   ├── .env
+│   └── .env.example
 ├── app/
 │   ├── backup.sh
 │   ├── entrypoint.sh
 │   └── crontab
 ├── Makefile
-├── .env
-├── .env.example
 ├── README.md
 └── .gitignore
 ```
@@ -633,7 +632,8 @@ README
 step "Generando .gitignore"
 
 cat > .gitignore <<'GITIGNORE'
-.env
+aDespliegue/dev/.env
+aDespliegue/prod/.env
 backups/
 /var/log/backup.log
 *.sql.gz
@@ -645,15 +645,10 @@ step "Generando leeme.txt"
   echo "desarrollo:"
   echo "-----------"
   echo "make up"
-  echo "http://localhost:${PORT_DEV}"
   echo ""
   echo "producción:"
   echo "-----------"
-  if [[ -n \"${PROD_SERVER_IP}\" ]]; then
-    echo "http://${PROD_SERVER_IP}:${PORT_PROD}"
-  else
-    echo "http://localhost:${PORT_PROD}"
-  fi
+  echo "make up-prod"
 } > leeme.txt
 
 step "Finalizado"
@@ -665,12 +660,13 @@ echo "╚═══════════════════════�
 echo ""
 echo "  Estructura creada:"
 echo "    ${PROJECT_FOLDER}/"
-echo "    ├── .devcontainer/"
-echo "    ├── aDespliegue/dev/"
 echo "    ├── app/"
+echo "    ├── aDespliegue/"
+echo "    │   ├── docker-compose.yml"
+echo "    │   ├── .env"
+echo "    │   ├── .env.example"
+echo "    │   └── Dockerfile"
 echo "    ├── Makefile"
-echo "    ├── .env"
-echo "    ├── .env.example"
 echo "    ├── leeme.txt"
 echo "    └── README.md"
 echo ""
@@ -689,3 +685,5 @@ echo "  Próximos pasos:"
 echo "    1. Ejecuta: make up"
 echo "    2. Revisa logs: make logs-backup"
 echo ""
+
+fi

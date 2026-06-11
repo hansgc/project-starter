@@ -4,7 +4,7 @@ set -e
 
 echo ""
 echo "╔══════════════════════════════════════════╗"
-echo "║      MySQL Docker Project Initializer    ║"
+echo "║   PostgreSQL Docker Project Initializer  ║"
 echo "╚══════════════════════════════════════════╝"
 echo ""
 
@@ -16,9 +16,9 @@ step() {
 verificar_red_docker() {
   local network_name=$1
   if docker network inspect "$network_name" >/dev/null 2>&1; then
-    return 0  # La red existe
+    return 0
   else
-    return 1  # La red NO existe
+    return 1
   fi
 }
 
@@ -62,11 +62,11 @@ if [[ -n "$CONFIG_FILE" ]]; then
   CONFIG_BASENAME=$(basename "$CONFIG_FILE" .conf)
   PROJECT_NAME=${CONFIG_BASENAME#project_}
   if [[ -z "${PROJECT_NAME:-}" ]]; then
-    PROJECT_NAME="mysql-project"
+    PROJECT_NAME="postgres-project"
   fi
 
-  MYSQL_VERSION="${MYSQL_VERSION:-8.0}"
-  MYSQL_PORT="${MYSQL_PORT:-3322}"
+  PG_VERSION="${PG_VERSION:-17}"
+  PG_PORT="${PG_PORT:-5432}"
   PROD_SERVER_IP="${PROD_SERVER_IP:-}"
   DB_NAME="${DB_NAME:-app_db}"
   DB_USER="${DB_USER:-app_user}"
@@ -75,7 +75,6 @@ if [[ -n "$CONFIG_FILE" ]]; then
   DB_NETWORK="${DB_NETWORK:-}"
 
 PROJECT_SLUG=$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')
-# Si no se definió directamente, calcularla desde DB_NETWORK
 DB_NETWORK="${DB_NETWORK:-${PROJECT_SLUG}_net}"
 
 # --- Verificar red Docker ---
@@ -100,7 +99,31 @@ step "Creando estructura de directorios"
 mkdir -p "$PROJECT_SLUG"
 cd "$PROJECT_SLUG"
 
-mkdir -p aDespliegue
+mkdir -p aDespliegue/initdb
+
+# --- Script de inicialización de PostgreSQL ---
+# Crea el usuario de aplicación separado del superusuario postgres
+step "Generando script de inicialización de base de datos"
+
+cat > aDespliegue/initdb/01-init-user.sql <<SQL
+-- Crear usuario de aplicación si no existe
+DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '${DB_USER}') THEN
+    CREATE USER "${DB_USER}" WITH PASSWORD '${DB_PASSWORD}';
+  END IF;
+END
+\$\$;
+
+-- Otorgar privilegios sobre la base de datos al usuario de aplicación
+GRANT ALL PRIVILEGES ON DATABASE "${DB_NAME}" TO "${DB_USER}";
+
+-- Otorgar privilegios sobre el schema public
+\c "${DB_NAME}"
+GRANT ALL ON SCHEMA public TO "${DB_USER}";
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO "${DB_USER}";
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO "${DB_USER}";
+SQL
 
 # --- aDespliegue/docker-compose.yml ---
 step "Generando docker-compose.yml"
@@ -108,21 +131,25 @@ step "Generando docker-compose.yml"
 cat > aDespliegue/docker-compose.yml <<YAML
 services:
   ${PROJECT_SLUG}:
-    image: mysql:${MYSQL_VERSION}
+    image: postgres:\${PG_VERSION}
     container_name: ${PROJECT_SLUG}
     restart: unless-stopped
     env_file: .env
     environment:
-      MYSQL_ROOT_PASSWORD: "\${DB_ROOT_PASSWORD}"
-      MYSQL_DATABASE: "\${DB_NAME}"
-      MYSQL_USER: "\${DB_USER}"
-      MYSQL_PASSWORD: "\${DB_PASSWORD}"
+      POSTGRES_DB: "\${DB_NAME}"
+      POSTGRES_PASSWORD: "\${DB_ROOT_PASSWORD}"
     ports:
-      - "\${MYSQL_PORT}:3306"
+      - "\${PG_PORT}:5432"
     volumes:
-      - ${PROJECT_SLUG}_data:/var/lib/mysql
+      - ${PROJECT_SLUG}_data:/var/lib/postgresql
+      - ./initdb:/docker-entrypoint-initdb.d:ro
     networks:
       - db_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d \${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   ${PROJECT_SLUG}_data:
@@ -134,13 +161,12 @@ networks:
     external: true
 YAML
 
-
 # --- Generando .env y .env.example ---
 step "Generando variables de entorno (.env)"
 
 cat > aDespliegue/.env.example <<ENV
-MYSQL_VERSION=${MYSQL_VERSION}
-MYSQL_PORT=${MYSQL_PORT}
+PG_VERSION=${PG_VERSION}
+PG_PORT=${PG_PORT}
 DB_NAME=${DB_NAME}
 DB_USER=${DB_USER}
 DB_PASSWORD=YOUR_DB_PASSWORD
@@ -149,8 +175,8 @@ DB_NETWORK=${DB_NETWORK}
 ENV
 
 cat > aDespliegue/.env <<ENV
-MYSQL_VERSION=${MYSQL_VERSION}
-MYSQL_PORT=${MYSQL_PORT}
+PG_VERSION=${PG_VERSION}
+PG_PORT=${PG_PORT}
 DB_NAME=${DB_NAME}
 DB_USER=${DB_USER}
 DB_PASSWORD=${DB_PASSWORD}
@@ -162,21 +188,21 @@ ENV
 step "Generando Makefile"
 
 cat > Makefile <<MAKE
-.PHONY: help up down logs sh mysql mysql-root backup restore
+.PHONY: help up down logs sh psql psql-root backup restore
 
-MYSQL_SERVICE = ${PROJECT_SLUG}
+PG_SERVICE = ${PROJECT_SLUG}
 
 help:
 	@echo "Comandos disponibles:"
-	@echo "  make help        - Muestra esta ayuda"
-	@echo "  make up          - Levanta el contenedor MySQL"
-	@echo "  make down        - Detiene el contenedor MySQL"
-	@echo "  make logs        - Muestra los logs en tiempo real"
-	@echo "  make sh          - Accede al shell del contenedor MySQL"
-	@echo "  make mysql       - Accede a MySQL con usuario normal"
-	@echo "  make mysql-root  - Accede a MySQL como root"
-	@echo "  make backup      - Realiza un backup de la base de datos"
-	@echo "  make restore     - Restaura un backup desde la carpeta backups/"
+	@echo "  make help       - Muestra esta ayuda"
+	@echo "  make up         - Levanta el contenedor PostgreSQL"
+	@echo "  make down       - Detiene el contenedor PostgreSQL"
+	@echo "  make logs       - Muestra los logs en tiempo real"
+	@echo "  make sh         - Accede al shell del contenedor"
+	@echo "  make psql       - Accede a psql con usuario de aplicación"
+	@echo "  make psql-root  - Accede a psql como superusuario postgres"
+	@echo "  make backup     - Realiza un backup de la base de datos"
+	@echo "  make restore    - Restaura un backup desde la carpeta backups/"
 
 up:
 	cd aDespliegue && docker compose up -d
@@ -188,18 +214,18 @@ logs:
 	cd aDespliegue && docker compose logs -f
 
 sh:
-	cd aDespliegue && docker compose exec ${MYSQL_SERVICE} bash
+	cd aDespliegue && docker compose exec \$(PG_SERVICE) bash
 
-mysql:
-	cd aDespliegue && docker compose exec ${MYSQL_SERVICE} sh -c 'mysql -u\$\$MYSQL_USER -p\$\$MYSQL_PASSWORD \$\$MYSQL_DATABASE'
+psql:
+	cd aDespliegue && docker compose exec \$(PG_SERVICE) psql -U ${DB_USER} -d ${DB_NAME}
 
-mysql-root:
-	cd aDespliegue && docker compose exec ${MYSQL_SERVICE} sh -c 'mysql -uroot -p\$\$MYSQL_ROOT_PASSWORD \$\$MYSQL_DATABASE'
+psql-root:
+	cd aDespliegue && docker compose exec \$(PG_SERVICE) psql -U postgres -d ${DB_NAME}
 
 backup:
 	@mkdir -p backups
 	@echo "Realizando copia de seguridad..."
-	cd aDespliegue && docker compose exec -T ${MYSQL_SERVICE} sh -c 'mysqldump -u\$\$MYSQL_USER -p\$\$MYSQL_PASSWORD \$\$MYSQL_DATABASE' > ../../backups/backup_\$\$(date +%Y%m%d_%H%M%S).sql
+	cd aDespliegue && docker compose exec -T \$(PG_SERVICE) pg_dump -U ${DB_USER} ${DB_NAME} > ../backups/backup_\$\$(date +%Y%m%d_%H%M%S).sql
 	@echo "Copia de seguridad guardada en backups/"
 
 restore:
@@ -212,7 +238,7 @@ restore:
 	@read -p "Ingresa el nombre del archivo de backup a restaurar (ej: backups/backup_xxx.sql): " backup_file; \\
 	if [ -f "\$\$backup_file" ]; then \\
 		echo "Restaurando \$\$backup_file..."; \\
-		cd aDespliegue && docker compose exec -T ${MYSQL_SERVICE} sh -c 'mysql -u\$\$MYSQL_USER -p\$\$MYSQL_PASSWORD \$\$MYSQL_DATABASE' < ../../"\$\$backup_file"; \\
+		cd aDespliegue && docker compose exec -T \$(PG_SERVICE) psql -U ${DB_USER} -d ${DB_NAME} < ../"\$\$backup_file"; \\
 		echo "Restauración completada con éxito."; \\
 	else \\
 		echo "El archivo '\$\$backup_file' no existe."; \\
@@ -242,9 +268,9 @@ step "Generando leeme.txt"
   echo "  make logs"
   echo ""
   if [[ -n "${PROD_SERVER_IP}" ]]; then
-    echo "Acceso MySQL: ${PROD_SERVER_IP}:${MYSQL_PORT}"
+    echo "Acceso PostgreSQL: ${PROD_SERVER_IP}:${PG_PORT}"
   else
-    echo "Acceso MySQL: localhost:${MYSQL_PORT}"
+    echo "Acceso PostgreSQL: localhost:${PG_PORT}"
   fi
 } > leeme.txt
 
@@ -258,6 +284,7 @@ echo "    ${PROJECT_SLUG}/"
 echo "    ├── aDespliegue/docker-compose.yml"
 echo "    ├── aDespliegue/.env"
 echo "    ├── aDespliegue/.env.example"
+echo "    ├── aDespliegue/initdb/01-init-user.sql"
 echo "    ├── Makefile"
 echo "    ├── leeme.txt"
 echo "    └── .gitignore"
@@ -267,18 +294,19 @@ echo "    cd ${PROJECT_SLUG}"
 echo "    make up"
 echo ""
 echo "  Datos de Acceso:"
-echo "    Host:        localhost (desde tu máquina)"
-echo "    Puerto:      ${MYSQL_PORT}"
-echo "    Database:    ${DB_NAME}"
-echo "    Usuario:     ${DB_USER}"
-echo "    Contraseña:  ${DB_PASSWORD}"
-echo "    ROOT Pass:   ${DB_ROOT_PASSWORD}"
+echo "    Host:            localhost (desde tu máquina)"
+echo "    Puerto:          ${PG_PORT}"
+echo "    Database:        ${DB_NAME}"
+echo "    Usuario app:     ${DB_USER}"
+echo "    Contraseña app:  ${DB_PASSWORD}"
+echo "    Superusuario:    postgres"
+echo "    Password root:   ${DB_ROOT_PASSWORD}"
 echo ""
 echo "  Comandos:"
 echo "    make up          → iniciar base de datos"
 echo "    make down        → detener base de datos"
-echo "    make mysql       → consola interactiva MySQL"
-echo "    make mysql-root  → consola interactiva MySQL como root"
+echo "    make psql        → consola interactiva (usuario app)"
+echo "    make psql-root   → consola interactiva (superusuario postgres)"
 echo "    make backup      → crear backup en backups/"
 echo "    make restore     → restaurar backup desde backups/"
 echo "    make logs        → ver logs en tiempo real"

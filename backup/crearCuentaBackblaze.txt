@@ -68,7 +68,8 @@ Abrir el archivo backup/.env del cliente y completar con los valores obtenidos:
 
 # Conexion a MySQL
 DB_HOST=mysql
-DB_PORT=3306
+DB_PORT_DEV=3306
+DB_PORT_PROD=3306
 DB_NAME=mibasededatos
 DB_USER=usuario
 DB_PASS=password123

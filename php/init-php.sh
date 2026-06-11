@@ -40,22 +40,6 @@ escape_symfony_env_percents() {
   echo "${1//%/%%}"
 }
 
-ask_yn() {
-  local label=$1
-  local default=${2:-n}
-  local hint=$([ "$default" = "s" ] && echo "[S/n]" || echo "[s/N]")
-  read -p "  $label $hint: " ans
-  ans=${ans:-$default}
-  [[ "$ans" =~ ^[sS]$ ]]
-}
-
-ask_input() {
-  local label=$1
-  local default=$2
-  read -p "$label [default: $default]: " val
-  echo "${val:-$default}"
-}
-
 step() {
   echo ""
   echo "$1"
@@ -220,27 +204,51 @@ if ! $USE_SYMFONY; then
 fi
 
 # EasyAdmin necesita Doctrine (aplica en ambos modos)
-if $USE_ADMIN && [[ -z "${DB_HOST:-}" ]]; then
+if $USE_ADMIN && [[ -z "${DB_HOST:-}" ]] && [[ -z "${DB_HOST_DEV:-}" ]]; then
   echo ""
-  echo "⚠ EasyAdmin requiere base de datos. Se activará DB_HOST por defecto."
-  DB_HOST="host.docker.internal"
+  echo "⚠ EasyAdmin requiere base de datos. Se activará DB_HOST_DEV por defecto."
+  DB_HOST_DEV="host.docker.internal"
 fi
 
 # Backup necesita Doctrine (aplica en ambos modos)
-if [[ -n "$BACKUP_CONTAINER_NAME" ]] && [[ -z "${DB_HOST:-}" ]]; then
+if [[ -n "$BACKUP_CONTAINER_NAME" ]] && [[ -z "${DB_HOST:-}" ]] && [[ -z "${DB_HOST_DEV:-}" ]]; then
   echo ""
-  echo "⚠ Backup requiere base de datos. Se activará DB_HOST por defecto."
-  DB_HOST="host.docker.internal"
+  echo "⚠ Backup requiere base de datos. Se activará DB_HOST_DEV por defecto."
+  DB_HOST_DEV="host.docker.internal"
 fi
 
 PROJECT_SLUG=$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')
 
+# Inicializar y resolver variables de base de datos de DEV y PROD con fallbacks
+DB_HOST="${DB_HOST:-}"
+DB_HOST_DEV="${DB_HOST_DEV:-${DB_HOST:-host.docker.internal}}"
+DB_HOST_PROD="${DB_HOST_PROD:-${DB_HOST:-host.docker.internal}}"
+
+DB_NAME="${DB_NAME:-}"
+DB_NAME_DEV="${DB_NAME_DEV:-${DB_NAME:-${PROJECT_SLUG}}}"
+DB_NAME_PROD="${DB_NAME_PROD:-${DB_NAME:-${PROJECT_SLUG}}}"
+
+DB_USER="${DB_USER:-}"
+DB_USER_DEV="${DB_USER_DEV:-${DB_USER:-app}}"
+DB_USER_PROD="${DB_USER_PROD:-${DB_USER:-app}}"
+
+DB_PASSWORD="${DB_PASSWORD:-}"
+DB_PASSWORD_DEV="${DB_PASSWORD_DEV:-${DB_PASSWORD:-secret}}"
+DB_PASSWORD_PROD="${DB_PASSWORD_PROD:-${DB_PASSWORD:-secret}}"
+
+DB_PORT_DEV="${DB_PORT_DEV:-3306}"
+DB_PORT_PROD="${DB_PORT_PROD:-3306}"
+
+DB_NETWORK="${DB_NETWORK:-}"
+DB_NETWORK_DEV="${DB_NETWORK_DEV:-${DB_NETWORK}}"
+DB_NETWORK_PROD="${DB_NETWORK_PROD:-${DB_NETWORK}}"
+
 # -----------------------------------------------------------------------------
 # Verificar contenedores Docker requeridos antes de continuar
 # -----------------------------------------------------------------------------
-if [[ -n "${DB_HOST:-}" ]]; then
+if [[ -n "${DB_HOST_DEV:-}" ]]; then
   step "Verificando contenedores Docker requeridos"
-  DB_CONTAINER="${DB_HOST:-mysql}"
+  DB_CONTAINER="${DB_HOST_DEV:-mysql}"
   verificar_contenedores_requeridos "$DB_CONTAINER" "$BACKUP_CONTAINER_NAME"
 fi
 DEV_PHP_SERVICE="${PROJECT_SLUG}-php-dev"
@@ -251,15 +259,11 @@ PROD_NGINX_SERVICE="${PROJECT_SLUG}-nginx-prod"
 PROD_NGINX_NAME="${PROJECT_SLUG}-nginx-prod"
 DEV_NETWORK_NAME="${PROJECT_SLUG}-php-dev_net"
 PROD_NETWORK_NAME="${PROJECT_SLUG}-php-prod_net"
-CONFIRM=s
-# -----------------------------------------------------------------------------
-# 2. Resumen (siempre se muestra, con confirmación solo en modo interactivo)
-  [[ "$CONFIRM" =~ ^[sS]$ ]] || { echo "Cancelado."; exit 0; }
 
 # -----------------------------------------------------------------------------
 # 3. Validar base de datos antes de crear directorios
 # -----------------------------------------------------------------------------
-if [[ -n "${DB_HOST:-}" ]]; then
+if [[ -n "${DB_HOST_DEV:-}" ]]; then
   # Cargar defaults si existen
   if [[ -f "$HOME/.symfony-defaults" ]]; then
     while IFS="=" read -r key value; do
@@ -269,11 +273,11 @@ if [[ -n "${DB_HOST:-}" ]]; then
       declare "DEFAULT_${key}=$value"
     done < "$HOME/.symfony-defaults"
   fi
-  CHECK_DB_USER="${DB_USER:-${DEFAULT_DB_USER:-app}}"
-  CHECK_DB_PASSWORD="${DB_PASSWORD:-${DEFAULT_DB_PASSWORD:-secret}}"
-  CHECK_DB_HOST="${DB_HOST:-${DEFAULT_DB_HOST:-host.docker.internal}}"
-  CHECK_DB_PORT="${DB_PORT:-${DEFAULT_DB_PORT:-3306}}"
-  CHECK_DB_NAME="${DB_NAME:-${PROJECT_SLUG}}"
+  CHECK_DB_USER="${DB_USER_DEV:-${DEFAULT_DB_USER:-app}}"
+  CHECK_DB_PASSWORD="${DB_PASSWORD_DEV:-${DEFAULT_DB_PASSWORD:-secret}}"
+  CHECK_DB_HOST="${DB_HOST_DEV:-${DEFAULT_DB_HOST:-host.docker.internal}}"
+  CHECK_DB_PORT="${DB_PORT_DEV:-${DEFAULT_DB_PORT_DEV:-3306}}"
+  CHECK_DB_NAME="${DB_NAME_DEV:-${PROJECT_SLUG}}"
 
   echo "Verificando base de datos antes de iniciar..."
 
@@ -415,9 +419,9 @@ step "Generando docker-compose.yml dev"
 
 DEV_DB_NETWORK=""
 DEV_EXTERNAL_NETWORK=""
-if [[ -n "${DB_HOST:-}" ]] && [[ -n "$DB_NETWORK" && "$DB_NETWORK" != "${DEV_NETWORK_NAME}" ]]; then
-  DEV_DB_NETWORK="      - ${DB_NETWORK}"
-  DEV_EXTERNAL_NETWORK=$(printf '  %s:\n    external: true' "$DB_NETWORK")
+if [[ -n "${DB_HOST_DEV:-}" ]] && [[ -n "$DB_NETWORK_DEV" && "$DB_NETWORK_DEV" != "${DEV_NETWORK_NAME}" ]]; then
+  DEV_DB_NETWORK="      - ${DB_NETWORK_DEV}"
+  DEV_EXTERNAL_NETWORK=$(printf '  %s:\n    external: true' "$DB_NETWORK_DEV")
 fi
 
 cat > aDespliegue/dev/docker-compose.yml <<YAML
@@ -428,19 +432,22 @@ services:
       context: ../..
       dockerfile: aDespliegue/dev/Dockerfile
     container_name: ${DEV_PHP_NAME}
+    restart: "no"
+    env_file: .env
     ports:
-      - "${PORT_DEV}:8000"
+      - "\${PORT_DEV}:8000"
     volumes:
       - ../../:/workspace
     environment:
       APP_ENV: dev
       APP_DEBUG: "1"
+      DATABASE_URL: "\${DATABASE_URL}"
     networks:
       - ${DEV_NETWORK_NAME}
 ${DEV_DB_NETWORK}
 YAML
 
-[[ -n "${DB_HOST:-}" ]] && cat >> aDespliegue/dev/docker-compose.yml <<YAML
+[[ -n "${DB_HOST_DEV:-}" ]] && cat >> aDespliegue/dev/docker-compose.yml <<YAML
     extra_hosts:
       - "host.docker.internal:host-gateway"
 YAML
@@ -520,9 +527,9 @@ fi
 # -----------------------------------------------------------------------------
 PROD_DB_NETWORK=""
 PROD_EXTERNAL_NETWORK=""
-if [[ -n "${DB_HOST:-}" ]] && [[ -n "$DB_NETWORK" && "$DB_NETWORK" != "${PROD_NETWORK_NAME}" ]]; then
-  PROD_DB_NETWORK="      - ${DB_NETWORK}"
-  PROD_EXTERNAL_NETWORK=$(printf '  %s:\n    external: true' "$DB_NETWORK")
+if [[ -n "${DB_HOST_PROD:-}" ]] && [[ -n "$DB_NETWORK_PROD" && "$DB_NETWORK_PROD" != "${PROD_NETWORK_NAME}" ]]; then
+  PROD_DB_NETWORK="      - ${DB_NETWORK_PROD}"
+  PROD_EXTERNAL_NETWORK=$(printf '  %s:\n    external: true' "$DB_NETWORK_PROD")
 fi
 
 cat > aDespliegue/prod/docker-compose.yml <<YAML
@@ -533,15 +540,18 @@ services:
       context: ../..
       dockerfile: aDespliegue/prod/Dockerfile
     container_name: ${PROD_PHP_NAME}
+    restart: unless-stopped
+    env_file: .env
     environment:
       APP_ENV: prod
       APP_DEBUG: "0"
+      DATABASE_URL: "\${DATABASE_URL}"
     networks:
       - ${PROD_NETWORK_NAME}
 ${PROD_DB_NETWORK}
 YAML
 
-[[ -n "${DB_HOST:-}" ]] && cat >> aDespliegue/prod/docker-compose.yml <<YAML
+[[ -n "${DB_HOST_PROD:-}" ]] && cat >> aDespliegue/prod/docker-compose.yml <<YAML
     extra_hosts:
       - "host.docker.internal:host-gateway"
 YAML
@@ -551,8 +561,9 @@ cat >> aDespliegue/prod/docker-compose.yml <<YAML
   ${PROD_NGINX_SERVICE}:
     image: nginx:alpine
     container_name: ${PROD_NGINX_NAME}
+    restart: unless-stopped
     ports:
-      - "${PORT_PROD}:80"
+      - "\${PORT_PROD}:80"
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf
     depends_on:
@@ -632,8 +643,7 @@ cat > .devcontainer/devcontainer.json <<JSON
       }
     }
   },
-  "postCreateCommand": "cd /workspace/app && composer install",
-  "postStartCommand": "cd /workspace/app && symfony server:start --no-tls --port=8000 --daemon"
+  "postCreateCommand": "cd /workspace/app && composer install"
 }
 JSON
 
@@ -668,16 +678,11 @@ JSON
 fi
 
 # -----------------------------------------------------------------------------
-# 11. .env base en la raíz
+# 11. Generando variables de entorno y secretos
 # -----------------------------------------------------------------------------
-step "Generando .env"
+step "Generando archivos .env de configuración"
 
 APP_SECRET=$(openssl rand -hex 16)
-DEV_DB_NAME="${DB_NAME:-${PROJECT_SLUG}}"
-DEV_DB_HOST="${DB_HOST:-host.docker.internal}"
-DEV_DB_PORT="${DB_PORT:-3306}"
-DEV_DB_USER="app"
-DEV_DB_PASSWORD="secret"
 DEV_ADMIN_LOGIN="${ADMIN_LOGIN:-}"
 DEV_ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
 ADMIN_CREDENTIALS_CONFIGURED=false
@@ -685,57 +690,58 @@ ADMIN_USER_CREATED=false
 if [[ -n "${DEV_ADMIN_LOGIN}" && -n "${DEV_ADMIN_PASSWORD}" ]]; then
   ADMIN_CREDENTIALS_CONFIGURED=true
 fi
-DEV_JWT_PASSPHRASE="changeme"
 
-if $USE_SYMFONY; then
-  # ── Leer defaults globales desde ~/.symfony-defaults ──────────────────────────
-  DEFAULTS_FILE="$HOME/.symfony-defaults"
-
-  if [[ ! -f "$DEFAULTS_FILE" ]]; then
-    echo "⚠ No se encontró ~/.symfony-defaults. Creando uno con valores de ejemplo..."
-    cat > "$DEFAULTS_FILE" <<DEFAULTS
-# Credenciales por defecto para proyectos Symfony en dev
-# Este archivo nunca debe commitearse al repositorio.
-DB_USER=app
-DB_PASSWORD=secret
-DB_HOST=host.docker.internal
-DB_PORT=3306
-JWT_PASSPHRASE=dev_jwt_passphrase
-DEFAULTS
-    echo "  ~/.symfony-defaults creado con valores de ejemplo."
-    echo "  Tip: editalo con tus credenciales reales para futuros proyectos."
-    echo "  Continuando con las credenciales definidas en el archivo .conf..."
-  fi
-
-  # Cargar defaults (ignorar comentarios y líneas vacías)
-  while IFS="=" read -r key value; do
-    [[ "$key" =~ ^#.*$ || -z "$key" ]] && continue
-    key=$(echo "$key" | tr -d " ")
-    value=$(echo "$value" | tr -d "\"" | tr -d "\047" | xargs)
-    declare "DEFAULT_${key}=$value"
-  done < "$DEFAULTS_FILE"
-
-  DEV_DB_USER="${DB_USER:-${DEFAULT_DB_USER:-app}}"
-  DEV_DB_PASSWORD="${DB_PASSWORD:-${DEFAULT_DB_PASSWORD:-secret}}"
-  DEV_DB_HOST="${DB_HOST:-${DEFAULT_DB_HOST:-host.docker.internal}}"
-  DEV_DB_PORT="${DB_PORT:-${DEFAULT_DB_PORT:-3306}}"
-  DEV_ADMIN_LOGIN="${ADMIN_LOGIN:-}"
-  DEV_ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
-  ADMIN_CREDENTIALS_CONFIGURED=false
-  if [[ -n "${DEV_ADMIN_LOGIN}" && -n "${DEV_ADMIN_PASSWORD}" ]]; then
-    ADMIN_CREDENTIALS_CONFIGURED=true
-  fi
-  DEV_JWT_PASSPHRASE="${DEFAULT_JWT_PASSPHRASE:-changeme}"
+# Generar URLs de conexión para DEV y PROD
+DEV_DATABASE_URL=""
+if [[ -n "${DB_HOST_DEV:-}" ]]; then
+  ENCODED_DEV_USER=$(urlencode "${DB_USER_DEV}")
+  ENCODED_DEV_PASSWORD=$(urlencode "${DB_PASSWORD_DEV}")
+  DEV_DATABASE_URL="mysql://${ENCODED_DEV_USER}:${ENCODED_DEV_PASSWORD}@${DB_HOST_DEV}:${DB_PORT_DEV}/${DB_NAME_DEV}"
+  DEV_DATABASE_URL=$(escape_symfony_env_percents "${DEV_DATABASE_URL}")
 fi
 
-# ── Variables que se inyectarán en app/.env después de crear Symfony ─────────
-DATABASE_URL=""
-if [[ -n "${DB_HOST:-}" ]]; then
-  ENCODED_DB_USER=$(urlencode "${DEV_DB_USER}")
-  ENCODED_DB_PASSWORD=$(urlencode "${DEV_DB_PASSWORD}")
-  DATABASE_URL="mysql://${ENCODED_DB_USER}:${ENCODED_DB_PASSWORD}@${DEV_DB_HOST}:${DEV_DB_PORT}/${DEV_DB_NAME}"
-  DATABASE_URL=$(escape_symfony_env_percents "${DATABASE_URL}")
+PROD_DATABASE_URL=""
+if [[ -n "${DB_HOST_PROD:-}" ]]; then
+  ENCODED_PROD_USER=$(urlencode "${DB_USER_PROD}")
+  ENCODED_PROD_PASSWORD=$(urlencode "${DB_PASSWORD_PROD}")
+  PROD_DATABASE_URL="mysql://${ENCODED_PROD_USER}:${ENCODED_PROD_PASSWORD}@${DB_HOST_PROD}:${DB_PORT_PROD}/${DB_NAME_PROD}"
+  PROD_DATABASE_URL=$(escape_symfony_env_percents "${PROD_DATABASE_URL}")
 fi
+
+# Escribir los archivos .env locales del entorno
+cat > aDespliegue/dev/.env.example <<ENV
+PORT_DEV=8080
+DATABASE_URL=YOUR_DATABASE_URL
+DB_NETWORK_DEV=${DB_NETWORK_DEV}
+APP_SECRET=YOUR_APP_SECRET
+JWT_PASSPHRASE=YOUR_JWT_PASSPHRASE
+ENV
+
+cat > aDespliegue/dev/.env <<ENV
+PORT_DEV=${PORT_DEV}
+DATABASE_URL=${DEV_DATABASE_URL}
+DB_NETWORK_DEV=${DB_NETWORK_DEV}
+APP_SECRET=${APP_SECRET}
+JWT_PASSPHRASE=${DEV_JWT_PASSPHRASE}
+ENV
+
+cat > aDespliegue/prod/.env.example <<ENV
+PORT_PROD=80
+PROD_SERVER_IP=
+DATABASE_URL=YOUR_DATABASE_URL
+DB_NETWORK_PROD=${DB_NETWORK_PROD}
+APP_SECRET=YOUR_APP_SECRET
+JWT_PASSPHRASE=YOUR_JWT_PASSPHRASE
+ENV
+
+cat > aDespliegue/prod/.env <<ENV
+PORT_PROD=${PORT_PROD}
+PROD_SERVER_IP=${PROD_SERVER_IP}
+DATABASE_URL=${PROD_DATABASE_URL}
+DB_NETWORK_PROD=${DB_NETWORK_PROD}
+APP_SECRET=${APP_SECRET}
+JWT_PASSPHRASE=${DEV_JWT_PASSPHRASE}
+ENV
 
 # -----------------------------------------------------------------------------
 # 12. Makefile en la raíz
@@ -743,104 +749,158 @@ fi
 step "Generando Makefile"
 
 cat > Makefile <<MAKE
-.PHONY: up down build serve start stop sh cc logs logs-symfony ps migrate migration jwt-keys prod-build prod-up
+.PHONY: help serve stop sh cc logs logs-symfony ps migrate migration jwt-keys up-dev down-dev build-dev up-prod down-prod build-prod
 
-ENV_DIR = aDespliegue/dev
-RUN_PHP = docker compose -f \$(ENV_DIR)/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE}
+PHP_SERVICE_dev = ${DEV_PHP_SERVICE}
+PHP_SERVICE_prod = ${PROD_PHP_SERVICE}
+APP_DIR_dev = /workspace/app
+APP_DIR_prod = /workspace
 
-up:
-	docker compose -f \$(ENV_DIR)/docker-compose.yml up -d
+help:
+	@echo "Comandos disponibles:"
+	@echo "  make help             - Muestra esta ayuda"
+	@echo "  make up-{dev|prod}    - Levanta el ambiente de desarrollo/producción"
+	@echo "  make down-{dev|prod}  - Detiene el ambiente de desarrollo/producción"
+	@echo "  make build-{dev|prod} - Reconstruye el ambiente de desarrollo/producción"
+	@echo "  make serve            - Inicia el servidor Symfony (solo dev)"
+	@echo "  make stop             - Detiene el servidor Symfony (solo dev)"
+	@echo "  make sh-{dev|prod}    - Accede al shell del contenedor PHP"
+	@echo "  make cc-{dev|prod}    - Limpia el cache de Symfony"
+	@echo "  make logs-{dev|prod}  - Muestra los logs de Docker"
+	@echo "  make logs-symfony     - Muestra los logs del servidor Symfony (dev)"
+	@echo "  make ps-{dev|prod}    - Muestra el estado de los contenedores"
 
-down:
-	\$(RUN_PHP) symfony server:stop 2>/dev/null || true
-	docker compose -f \$(ENV_DIR)/docker-compose.yml down
+up-dev:
+	cd aDespliegue/dev && docker compose up -d
 
-build:
-	docker compose -f \$(ENV_DIR)/docker-compose.yml build --no-cache
+down-dev:
+	cd aDespliegue/dev && docker compose down
+
+build-dev:
+	cd aDespliegue/dev && docker compose build --no-cache
+
+up-prod:
+	cd aDespliegue/prod && docker compose up -d
+
+down-prod:
+	cd aDespliegue/prod && docker compose down
+
+build-prod:
+	cd aDespliegue/prod && docker compose build --no-cache
 
 serve:
-	\$(RUN_PHP) symfony server:start --no-tls --port=8000 --daemon
+	cd aDespliegue/dev && docker compose exec -w /workspace/app ${DEV_PHP_SERVICE} symfony server:start --no-tls --port=8000 --daemon
 
 stop:
-	\$(RUN_PHP) symfony server:stop
+	cd aDespliegue/dev && docker compose exec -w /workspace/app ${DEV_PHP_SERVICE} symfony server:stop 2>/dev/null || true
 
-start: up serve
+sh-dev:
+	cd aDespliegue/dev && docker compose exec -w /workspace/app ${DEV_PHP_SERVICE} bash
 
-sh:
-	\$(RUN_PHP) bash
+sh-prod:
+	cd aDespliegue/prod && docker compose exec -w /workspace ${PROD_PHP_SERVICE} bash
 
-cc:
-	\$(RUN_PHP) php bin/console cache:clear
+cc-dev:
+	cd aDespliegue/dev && docker compose exec -w /workspace/app ${DEV_PHP_SERVICE} php bin/console cache:clear
 
-logs:
-	docker compose -f \$(ENV_DIR)/docker-compose.yml logs -f
+cc-prod:
+	cd aDespliegue/prod && docker compose exec -w /workspace ${PROD_PHP_SERVICE} php bin/console cache:clear
+
+logs-dev:
+	cd aDespliegue/dev && docker compose logs -f
+
+logs-prod:
+	cd aDespliegue/prod && docker compose logs -f
 
 logs-symfony:
-	\$(RUN_PHP) symfony server:log
+	cd aDespliegue/dev && docker compose exec -w /workspace/app ${DEV_PHP_SERVICE} symfony server:log
 
-ps:
-	docker compose -f \$(ENV_DIR)/docker-compose.yml ps
+ps-dev:
+	cd aDespliegue/dev && docker compose ps
+
+ps-prod:
+	cd aDespliegue/prod && docker compose ps
 
 MAKE
 
 [[ -n "${DB_HOST:-}" ]] && cat >> Makefile <<MAKE
-migrate:
-	\$(RUN_PHP) php bin/console doctrine:migrations:migrate --no-interaction
+migrate-dev:
+	cd aDespliegue/dev && docker compose exec -w /workspace/app ${DEV_PHP_SERVICE} php bin/console doctrine:migrations:migrate --no-interaction
 
-migration:
-	\$(RUN_PHP) php bin/console make:migration
+migrate-prod:
+	cd aDespliegue/prod && docker compose exec -w /workspace ${PROD_PHP_SERVICE} php bin/console doctrine:migrations:migrate --no-interaction
+
+migration-dev:
+	cd aDespliegue/dev && docker compose exec -w /workspace/app ${DEV_PHP_SERVICE} php bin/console make:migration
+
+migration-prod:
+	cd aDespliegue/prod && docker compose exec -w /workspace ${PROD_PHP_SERVICE} php bin/console make:migration
 
 MAKE
 
 $USE_JWT && cat >> Makefile <<MAKE
-jwt-keys:
-	\$(RUN_PHP) php bin/console lexik:jwt:generate-keypair
+jwt-keys-dev:
+	cd aDespliegue/dev && docker compose exec -w /workspace/app ${DEV_PHP_SERVICE} php bin/console lexik:jwt:generate-keypair
 
-MAKE
-
-cat >> Makefile <<MAKE
-prod-build:
-	docker compose -f aDespliegue/prod/docker-compose.yml build --no-cache
-
-prod-up:
-	docker compose -f aDespliegue/prod/docker-compose.yml up -d
+jwt-keys-prod:
+	cd aDespliegue/prod && docker compose exec -w /workspace ${PROD_PHP_SERVICE} php bin/console lexik:jwt:generate-keypair
 
 MAKE
 
 if ! $USE_SYMFONY; then
   cat > Makefile <<MAKE
-.PHONY: up down build start stop sh logs ps prod-build prod-up
+.PHONY: help sh logs ps up-dev down-dev build-dev up-prod down-prod build-prod
 
-ENV_DIR = aDespliegue/dev
-RUN_PHP = docker compose -f \$(ENV_DIR)/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE}
+PHP_SERVICE_dev = ${DEV_PHP_SERVICE}
+PHP_SERVICE_prod = ${PROD_PHP_SERVICE}
+APP_DIR_dev = /workspace/app
+APP_DIR_prod = /workspace
 
-up:
-	docker compose -f \$(ENV_DIR)/docker-compose.yml up -d
+help:
+	@echo "Comandos disponibles:"
+	@echo "  make help             - Muestra esta ayuda"
+	@echo "  make up-{dev|prod}    - Levanta el ambiente de desarrollo/producción"
+	@echo "  make down-{dev|prod}  - Detiene el ambiente de desarrollo/producción"
+	@echo "  make build-{dev|prod} - Reconstruye el ambiente de desarrollo/producción"
+	@echo "  make sh-{dev|prod}    - Accede al shell del contenedor PHP"
+	@echo "  make logs-{dev|prod}  - Muestra los logs de Docker"
+	@echo "  make ps-{dev|prod}    - Muestra el estado de los contenedores"
 
-down:
-	docker compose -f \$(ENV_DIR)/docker-compose.yml down
+up-dev:
+	cd aDespliegue/dev && docker compose up -d
 
-build:
-	docker compose -f \$(ENV_DIR)/docker-compose.yml build --no-cache
+down-dev:
+	cd aDespliegue/dev && docker compose down
 
-start: up
+build-dev:
+	cd aDespliegue/dev && docker compose build --no-cache
 
-stop: down
+up-prod:
+	cd aDespliegue/prod && docker compose up -d
 
-sh:
-	\$(RUN_PHP) bash
+down-prod:
+	cd aDespliegue/prod && docker compose down
 
-logs:
-	docker compose -f \$(ENV_DIR)/docker-compose.yml logs -f
+build-prod:
+	cd aDespliegue/prod && docker compose build --no-cache
 
-ps:
-	docker compose -f \$(ENV_DIR)/docker-compose.yml ps
+sh-dev:
+	cd aDespliegue/dev && docker compose exec -w /workspace/app ${DEV_PHP_SERVICE} bash
 
-prod-build:
-	docker compose -f aDespliegue/prod/docker-compose.yml build --no-cache
+sh-prod:
+	cd aDespliegue/prod && docker compose exec -w /workspace ${PROD_PHP_SERVICE} bash
 
-prod-up:
-	docker compose -f aDespliegue/prod/docker-compose.yml up -d
+logs-dev:
+	cd aDespliegue/dev && docker compose logs -f
+
+logs-prod:
+	cd aDespliegue/prod && docker compose logs -f
+
+ps-dev:
+	cd aDespliegue/dev && docker compose ps
+
+ps-prod:
+	cd aDespliegue/prod && docker compose ps
 
 MAKE
 fi
@@ -962,26 +1022,20 @@ if [[ -d "$STUBS_DIR" ]]; then
     fi
   fi
 
-  if [[ -n "$BACKUP_CONTAINER_NAME" ]] && [[ -d "$STUBS_DIR/backup" ]]; then
-    [[ -d "$STUBS_DIR/backup/Entity" ]] && cp -r "$STUBS_DIR/backup/Entity" app/src/
-    [[ -d "$STUBS_DIR/backup/EventListener" ]] && cp -r "$STUBS_DIR/backup/EventListener" app/src/
-    [[ -d "$STUBS_DIR/backup/migrations" ]] && cp -r "$STUBS_DIR/backup/migrations/"*.php app/migrations/ 2>/dev/null || true
-    echo "  ✓ stubs/backup → app/src/ (Entity + EventListener + migrations)"
-  fi
 
 else
   echo "  (No se encontró el directorio stubs/, se omite este paso)"
 fi
 
-if [[ -n "${DB_HOST:-}" ]]; then
+if [[ -n "${DB_HOST_DEV:-}" ]]; then
   # Symfony/Doctrine puede dejar una DATABASE_URL de ejemplo activa; deshabilitarla antes de escribir la real.
   sed -i -E 's/^DATABASE_URL=/# DATABASE_URL=/' app/.env
   cat >> app/.env <<ENV
 
-DATABASE_URL=${DATABASE_URL}
+DATABASE_URL=${DEV_DATABASE_URL}
 ENV
 fi
-if [[ -n "${DB_HOST:-}" ]]; then
+if [[ -n "${DB_HOST_DEV:-}" ]]; then
   step "Verificando conexión a la base de datos"
   if ! docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE} php -r "
     require '/workspace/app/vendor/autoload.php';
@@ -1257,19 +1311,20 @@ fi
 echo ""
 echo "  Comandos:"
 if $USE_SYMFONY; then
-  echo "    make start     → levanta Docker + servidor Symfony"
-  echo "    make serve     → solo arranca el servidor Symfony"
-  echo "    make sh        → bash en el contenedor PHP"
-  echo "    make cc        → cache:clear"
-  [[ -n "${DB_HOST:-}" ]] && echo "    make migrate   → doctrine:migrations:migrate"
-  $USE_JWT     && echo "    make jwt-keys  → regenerar claves JWT"
-  echo "    make logs-symfony → ver log del servidor Symfony"
+  echo "    make up-{dev|prod}    → levanta Docker"
+  echo "    make down-{dev|prod}  → detiene Docker"
+  echo "    make serve           → solo arranca el servidor Symfony (dev)"
+  echo "    make sh-{dev|prod}   → bash en el contenedor PHP"
+  echo "    make cc-{dev|prod}   → cache:clear"
+  [[ -n "${DB_HOST:-}" ]] && echo "    make migrate-{dev|prod} → doctrine:migrations:migrate"
+  $USE_JWT     && echo "    make jwt-keys-{dev|prod} → regenerar claves JWT"
+  echo "    make logs-symfony    → ver log del servidor Symfony (dev)"
 else
-  echo "    make start     → levanta Docker"
-  echo "    make sh        → bash en el contenedor PHP"
-  echo "    make logs      → ver logs de Docker"
+  echo "    make up-{dev|prod}    → levanta Docker"
+  echo "    make down-{dev|prod}  → detiene Docker"
+  echo "    make sh-{dev|prod}   → bash en el contenedor PHP"
+  echo "    make logs-{dev|prod} → ver logs de Docker"
 fi
-echo "    make prod-up   → levantar entorno prod (Nginx)"
 echo ""
 echo "  En VSCode: Dev Containers: Reopen in Container"
 echo ""
