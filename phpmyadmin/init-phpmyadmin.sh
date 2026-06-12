@@ -73,21 +73,15 @@ if [[ -n "$CONFIG_FILE" ]]; then
   DB_NETWORK="${DB_NETWORK:-}"
 
 PROJECT_SLUG=$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')
-# Si no se definió directamente, calcularla desde DB_NETWORK
-DB_NETWORK="${DB_NETWORK:-${PROJECT_SLUG}_net}"
+DB_NETWORK="${DB_NETWORK:-proyectos-net}"
 
 # --- Verificar red Docker ---
 step "Verificando red Docker"
 if ! verificar_red_docker "$DB_NETWORK"; then
-  echo "  ⚠ La red Docker '$DB_NETWORK' no existe."
-  echo "  Creando red automáticamente..."
-  if crear_red_docker "$DB_NETWORK"; then
-    echo "  ✓ Red '$DB_NETWORK' creada."
-  else
-    echo "  ❌ No se pudo crear la red '$DB_NETWORK'. Por favor, créala manualmente con:"
-    echo "     docker network create $DB_NETWORK"
-    exit 1
-  fi
+  echo "  ❌ La red Docker '$DB_NETWORK' no existe."
+  echo "  Créala antes de ejecutar este script:"
+  echo "     docker network create $DB_NETWORK"
+  exit 1
 else
   echo "  ✓ La red '$DB_NETWORK' existe."
 fi
