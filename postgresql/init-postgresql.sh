@@ -136,10 +136,10 @@ services:
     ports:
       - "\${PG_PORT}:5432"
     volumes:
-      - ${PROJECT_SLUG}_data:/var/lib/postgresql
+      - data:/var/lib/postgresql
       - ./initdb:/docker-entrypoint-initdb.d:ro
     networks:
-      - db_network
+      - network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d \${DB_NAME}"]
       interval: 10s
@@ -147,11 +147,11 @@ services:
       retries: 5
 
 volumes:
-  ${PROJECT_SLUG}_data:
+  data:
     name: ${PROJECT_SLUG}_data
 
 networks:
-  db_network:
+  network:
     name: "\${DB_NETWORK}"
     external: true
 YAML

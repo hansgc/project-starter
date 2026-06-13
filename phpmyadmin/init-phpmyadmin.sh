@@ -114,10 +114,10 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
-      - db_network
+      - network
 
 networks:
-  db_network:
+  network:
     name: "\${DB_NETWORK}"
     external: true
 YAML

@@ -114,16 +114,16 @@ services:
     ports:
       - "\${MYSQL_PORT}:3306"
     volumes:
-      - ${PROJECT_SLUG}_data:/var/lib/mysql
+      - data:/var/lib/mysql
     networks:
-      - db_network
+      - network
 
 volumes:
-  ${PROJECT_SLUG}_data:
+  data:
     name: ${PROJECT_SLUG}_data
 
 networks:
-  db_network:
+  network:
     name: "\${DB_NETWORK}"
     external: true
 YAML

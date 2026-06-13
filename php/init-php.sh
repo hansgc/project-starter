@@ -236,8 +236,11 @@ DB_PASSWORD="${DB_PASSWORD:-}"
 DB_PASSWORD_DEV="${DB_PASSWORD_DEV:-${DB_PASSWORD:-secret}}"
 DB_PASSWORD_PROD="${DB_PASSWORD_PROD:-${DB_PASSWORD:-secret}}"
 
-DB_PORT_DEV="${DB_PORT_DEV:-3306}"
-DB_PORT_PROD="${DB_PORT_PROD:-3306}"
+DB_DRIVER="${DB_DRIVER:-mysql}"
+DB_DEFAULT_PORT=3306
+[[ "$DB_DRIVER" == "postgresql" ]] && DB_DEFAULT_PORT=5432
+DB_PORT_DEV="${DB_PORT_DEV:-${DB_PORT:-$DB_DEFAULT_PORT}}"
+DB_PORT_PROD="${DB_PORT_PROD:-${DB_PORT:-$DB_DEFAULT_PORT}}"
 
 DB_NETWORK="${DB_NETWORK:-proyectos-net}"
 DB_NETWORK_DEV="${DB_NETWORK_DEV:-${DB_NETWORK}}"
@@ -286,38 +289,70 @@ if [[ -n "${DB_HOST_DEV:-}" ]]; then
 
   # Método 1: Si el host de la base de datos es un contenedor Docker corriendo localmente
   if docker ps --format '{{.Names}}' | grep -Eq "^${CHECK_DB_HOST}$"; then
-    if docker exec "${CHECK_DB_HOST}" mysql -u"${CHECK_DB_USER}" -p"${CHECK_DB_PASSWORD}" -e "USE \`${CHECK_DB_NAME}\`;" &>/dev/null; then
-      DB_EXISTS=true
+    if [[ "$DB_DRIVER" == "postgresql" ]]; then
+      if docker exec "${CHECK_DB_HOST}" psql -U"${CHECK_DB_USER}" -c "\c ${CHECK_DB_NAME}" &>/dev/null; then
+        DB_EXISTS=true
+      fi
+    else
+      if docker exec "${CHECK_DB_HOST}" mysql -u"${CHECK_DB_USER}" -p"${CHECK_DB_PASSWORD}" -e "USE \`${CHECK_DB_NAME}\`;" &>/dev/null; then
+        DB_EXISTS=true
+      fi
     fi
     VERIFIED=true
   fi
 
-  # Método 2: Si el host tiene instalado el cliente mysql
-  if ! $VERIFIED && command -v mysql &>/dev/null; then
-    if mysql -h"${CHECK_DB_HOST}" -P"${CHECK_DB_PORT}" -u"${CHECK_DB_USER}" -p"${CHECK_DB_PASSWORD}" -e "USE \`${CHECK_DB_NAME}\`;" &>/dev/null; then
-      DB_EXISTS=true
+  # Método 2: Si el host tiene instalado el cliente de BD
+  if [[ "$DB_DRIVER" == "postgresql" ]]; then
+    if ! $VERIFIED && command -v psql &>/dev/null; then
+      if PGPASSWORD="${CHECK_DB_PASSWORD}" psql -h"${CHECK_DB_HOST}" -p"${CHECK_DB_PORT}" -U"${CHECK_DB_USER}" -d"${CHECK_DB_NAME}" -c "\q" &>/dev/null; then
+        DB_EXISTS=true
+      fi
+      VERIFIED=true
     fi
-    VERIFIED=true
+  else
+    if ! $VERIFIED && command -v mysql &>/dev/null; then
+      if mysql -h"${CHECK_DB_HOST}" -P"${CHECK_DB_PORT}" -u"${CHECK_DB_USER}" -p"${CHECK_DB_PASSWORD}" -e "USE \`${CHECK_DB_NAME}\`;" &>/dev/null; then
+        DB_EXISTS=true
+      fi
+      VERIFIED=true
+    fi
   fi
 
-  # Método 3: Si el host tiene php con pdo_mysql
-  if ! $VERIFIED && command -v php &>/dev/null && php -m | grep -q "pdo_mysql"; then
-    if php -r "new PDO('mysql:host=${CHECK_DB_HOST};port=${CHECK_DB_PORT};dbname=${CHECK_DB_NAME}', '${CHECK_DB_USER}', '${CHECK_DB_PASSWORD}');" &>/dev/null; then
-      DB_EXISTS=true
+  # Método 3: Si el host tiene php con el driver PDO correspondiente
+  if [[ "$DB_DRIVER" == "postgresql" ]]; then
+    if ! $VERIFIED && command -v php &>/dev/null && php -m | grep -q "pdo_pgsql"; then
+      if php -r "new PDO('pgsql:host=${CHECK_DB_HOST};port=${CHECK_DB_PORT};dbname=${CHECK_DB_NAME}', '${CHECK_DB_USER}', '${CHECK_DB_PASSWORD}');" &>/dev/null; then
+        DB_EXISTS=true
+      fi
+      VERIFIED=true
     fi
-    VERIFIED=true
+  else
+    if ! $VERIFIED && command -v php &>/dev/null && php -m | grep -q "pdo_mysql"; then
+      if php -r "new PDO('mysql:host=${CHECK_DB_HOST};port=${CHECK_DB_PORT};dbname=${CHECK_DB_NAME}', '${CHECK_DB_USER}', '${CHECK_DB_PASSWORD}');" &>/dev/null; then
+        DB_EXISTS=true
+      fi
+      VERIFIED=true
+    fi
   fi
 
   if $VERIFIED; then
     if ! $DB_EXISTS; then
       echo ""
       echo "❌ Error crítico: La base de datos '${CHECK_DB_NAME}' no existe en el servidor '${CHECK_DB_HOST}:${CHECK_DB_PORT}'."
-      echo "   Por favor, crea la base de datos en tu MySQL y otorga los privilegios al usuario '${CHECK_DB_USER}'."
-      echo "   Puedes crearla ejecutando el siguiente código SQL (como root):"
-      echo ""
-      echo "     CREATE DATABASE \`${CHECK_DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-      echo "     GRANT ALL PRIVILEGES ON \`${CHECK_DB_NAME}\`.* TO '${CHECK_DB_USER}'@'%';"
-      echo "     FLUSH PRIVILEGES;"
+      if [[ "$DB_DRIVER" == "postgresql" ]]; then
+        echo "   Por favor, crea la base de datos en tu PostgreSQL y otorga los privilegios al usuario '${CHECK_DB_USER}'."
+        echo "   Puedes crearla ejecutando el siguiente código SQL (como superusuario):"
+        echo ""
+        echo "     CREATE DATABASE ${CHECK_DB_NAME};"
+        echo "     GRANT ALL PRIVILEGES ON DATABASE ${CHECK_DB_NAME} TO ${CHECK_DB_USER};"
+      else
+        echo "   Por favor, crea la base de datos en tu MySQL y otorga los privilegios al usuario '${CHECK_DB_USER}'."
+        echo "   Puedes crearla ejecutando el siguiente código SQL (como root):"
+        echo ""
+        echo "     CREATE DATABASE \`${CHECK_DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+        echo "     GRANT ALL PRIVILEGES ON \`${CHECK_DB_NAME}\`.* TO '${CHECK_DB_USER}'@'%';"
+        echo "     FLUSH PRIVILEGES;"
+      fi
       echo ""
       exit 1
     else
@@ -329,8 +364,13 @@ if [[ -n "${DB_HOST_DEV:-}" ]]; then
     echo "   Para poder continuar, el script necesita verificar si la base de datos '${CHECK_DB_NAME}' existe."
     echo "   Por favor, asegúrate de cumplir con al menos una de las siguientes opciones:"
     echo "     1. Tener el contenedor de base de datos '${CHECK_DB_HOST}' iniciado y en ejecución (si usas Docker)."
-    echo "     2. Instalar el cliente de MySQL en tu sistema host (ej. 'sudo apt install mysql-client' o similar)."
-    echo "     3. Instalar PHP con el driver PDO MySQL en tu sistema host (ej. 'sudo apt install php-mysql' o similar)."
+    if [[ "$DB_DRIVER" == "postgresql" ]]; then
+      echo "     2. Instalar el cliente psql en tu sistema host (ej. 'sudo apt install postgresql-client' o similar)."
+      echo "     3. Instalar PHP con el driver PDO PostgreSQL en tu sistema host (ej. 'sudo apt install php-pgsql' o similar)."
+    else
+      echo "     2. Instalar el cliente de MySQL en tu sistema host (ej. 'sudo apt install mysql-client' o similar)."
+      echo "     3. Instalar PHP con el driver PDO MySQL en tu sistema host (ej. 'sudo apt install php-mysql' o similar)."
+    fi
     echo ""
     exit 1
   fi
@@ -365,7 +405,13 @@ else
   DEV_EXTENSIONS=""
   DEV_APT="wget curl procps"
 fi
-[[ -n "${DB_HOST:-}" ]] && DEV_APT+=" default-libmysqlclient-dev"         && DEV_EXTENSIONS+=" pdo pdo_mysql"
+if [[ -n "${DB_HOST:-}" ]]; then
+  if [[ "$DB_DRIVER" == "postgresql" ]]; then
+    DEV_APT+=" libpq-dev" && DEV_EXTENSIONS+=" pdo pdo_pgsql"
+  else
+    DEV_APT+=" default-libmysqlclient-dev" && DEV_EXTENSIONS+=" pdo pdo_mysql"
+  fi
+fi
 
 DEV_INSTALL_EXTENSIONS="&& true"
 if [[ -n "$DEV_EXTENSIONS" ]]; then
@@ -468,7 +514,13 @@ step "Generando Dockerfile prod"
 if $USE_SYMFONY; then
   PROD_EXTENSIONS="intl opcache zip"
   PROD_APT="git curl unzip libicu-dev libonig-dev libxml2-dev libzip-dev"
-  [[ -n "${DB_HOST:-}" ]] && PROD_APT+=" default-libmysqlclient-dev" && PROD_EXTENSIONS+=" pdo pdo_mysql"
+  if [[ -n "${DB_HOST:-}" ]]; then
+    if [[ "$DB_DRIVER" == "postgresql" ]]; then
+      PROD_APT+=" libpq-dev" && PROD_EXTENSIONS+=" pdo pdo_pgsql"
+    else
+      PROD_APT+=" default-libmysqlclient-dev" && PROD_EXTENSIONS+=" pdo pdo_mysql"
+    fi
+  fi
 
   cat > aDespliegue/prod/Dockerfile <<DOCKERFILE
 FROM php:${PHP_VERSION}-fpm AS builder
@@ -692,11 +744,14 @@ if [[ -n "${DEV_ADMIN_LOGIN}" && -n "${DEV_ADMIN_PASSWORD}" ]]; then
 fi
 
 # Generar URLs de conexión para DEV y PROD
+DB_URL_SCHEME="mysql"
+[[ "$DB_DRIVER" == "postgresql" ]] && DB_URL_SCHEME="postgresql"
+
 DEV_DATABASE_URL=""
 if [[ -n "${DB_HOST_DEV:-}" ]]; then
   ENCODED_DEV_USER=$(urlencode "${DB_USER_DEV}")
   ENCODED_DEV_PASSWORD=$(urlencode "${DB_PASSWORD_DEV}")
-  DEV_DATABASE_URL="mysql://${ENCODED_DEV_USER}:${ENCODED_DEV_PASSWORD}@${DB_HOST_DEV}:${DB_PORT_DEV}/${DB_NAME_DEV}"
+  DEV_DATABASE_URL="${DB_URL_SCHEME}://${ENCODED_DEV_USER}:${ENCODED_DEV_PASSWORD}@${DB_HOST_DEV}:${DB_PORT_DEV}/${DB_NAME_DEV}"
   DEV_DATABASE_URL=$(escape_symfony_env_percents "${DEV_DATABASE_URL}")
 fi
 
@@ -704,7 +759,7 @@ PROD_DATABASE_URL=""
 if [[ -n "${DB_HOST_PROD:-}" ]]; then
   ENCODED_PROD_USER=$(urlencode "${DB_USER_PROD}")
   ENCODED_PROD_PASSWORD=$(urlencode "${DB_PASSWORD_PROD}")
-  PROD_DATABASE_URL="mysql://${ENCODED_PROD_USER}:${ENCODED_PROD_PASSWORD}@${DB_HOST_PROD}:${DB_PORT_PROD}/${DB_NAME_PROD}"
+  PROD_DATABASE_URL="${DB_URL_SCHEME}://${ENCODED_PROD_USER}:${ENCODED_PROD_PASSWORD}@${DB_HOST_PROD}:${DB_PORT_PROD}/${DB_NAME_PROD}"
   PROD_DATABASE_URL=$(escape_symfony_env_percents "${PROD_DATABASE_URL}")
 fi
 
@@ -1035,6 +1090,9 @@ if [[ -n "${DB_HOST_DEV:-}" ]]; then
 DATABASE_URL=${DEV_DATABASE_URL}
 ENV
 fi
+DB_PDO_DRIVER="mysql"
+[[ "$DB_DRIVER" == "postgresql" ]] && DB_PDO_DRIVER="pgsql"
+
 if [[ -n "${DB_HOST_DEV:-}" ]]; then
   step "Verificando conexión a la base de datos"
   if ! docker compose -f aDespliegue/dev/docker-compose.yml exec -w /workspace/app ${DEV_PHP_SERVICE} php -r "
@@ -1056,7 +1114,7 @@ if [[ -n "${DB_HOST_DEV:-}" ]]; then
     \$serverConnected = false;
     for (\$i = 1; \$i <= \$maxAttempts; \$i++) {
       try {
-        \$pdo = new PDO('mysql:host=' . \$host . ';port=' . \$port, \$user, \$pass, [
+        \$pdo = new PDO('${DB_PDO_DRIVER}:host=' . \$host . ';port=' . \$port, \$user, \$pass, [
           PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
           PDO::ATTR_TIMEOUT => 2
         ]);
@@ -1075,25 +1133,15 @@ if [[ -n "${DB_HOST_DEV:-}" ]]; then
     if (\$serverConnected) {
       // 2. Verificar si la base de datos existe e intentar acceder a ella
       try {
-        \$pdoDb = new PDO('mysql:host=' . \$host . ';port=' . \$port . ';dbname=' . \$dbName, \$user, \$pass, [
+        \$pdoDb = new PDO('${DB_PDO_DRIVER}:host=' . \$host . ';port=' . \$port . ';dbname=' . \$dbName, \$user, \$pass, [
           PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
           PDO::ATTR_TIMEOUT => 2
         ]);
         echo '  Conexión exitosa a la base de datos \'' . \$dbName . '\'' . PHP_EOL;
         exit(0);
       } catch (PDOException \$e) {
-        if (\$e->getCode() == 1049) {
-          echo '❌ Error crítico: La base de datos \'' . \$dbName . '\' no existe en el servidor.' . PHP_EOL;
-          echo '   Por favor, crea la base de datos en tu MySQL y otorga los privilegios al usuario \'' . \$user . '\'.' . PHP_EOL;
-          echo '   Puedes crearla con el siguiente comando SQL (ejecutado como root):' . PHP_EOL;
-          echo '     CREATE DATABASE \`' . \$dbName . '\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;' . PHP_EOL;
-          echo '     GRANT ALL PRIVILEGES ON \`' . \$dbName . '\`.* TO \'' . \$user . '\'@\'%\';' . PHP_EOL;
-          echo '     FLUSH PRIVILEGES;' . PHP_EOL;
-          exit(1);
-        } else {
-          echo '❌ Error crítico de conexión a la base de datos \'' . \$dbName . '\': ' . \$e->getMessage() . PHP_EOL;
-          exit(1);
-        }
+        echo '❌ Error crítico de conexión a la base de datos \'' . \$dbName . '\': ' . \$e->getMessage() . PHP_EOL;
+        exit(1);
       }
     }
   "; then
@@ -1119,8 +1167,11 @@ if $USE_AUTH && [[ -n "${DB_HOST:-}" ]]; then
     \$pass = \$_ENV['DB_PASSWORD'] ?? (isset(\$databaseParts['pass']) ? rawurldecode(\$databaseParts['pass']) : '');
     \$dbName = \$_ENV['DB_NAME'] ?? (isset(\$databaseParts['path']) ? ltrim(\$databaseParts['path'], '/') : '');
     try {
-      \$pdo = new PDO('mysql:host=' . \$host . ';port=' . \$port . ';dbname=' . \$dbName, \$user, \$pass);
-      \$count = (int) \$pdo->query('SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()')->fetchColumn();
+      \$pdo = new PDO('${DB_PDO_DRIVER}:host=' . \$host . ';port=' . \$port . ';dbname=' . \$dbName, \$user, \$pass);
+      \$sql = '${DB_DRIVER}' === 'postgresql'
+        ? "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
+        : 'SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()';
+      \$count = (int) \$pdo->query(\$sql)->fetchColumn();
       echo \$count > 0 ? 'true' : 'false';
     } catch (Exception \$e) {
       echo 'false';
@@ -1142,9 +1193,12 @@ if $USE_AUTH && [[ -n "${DB_HOST:-}" ]]; then
     \$pass = \$_ENV['DB_PASSWORD'] ?? (isset(\$databaseParts['pass']) ? rawurldecode(\$databaseParts['pass']) : '');
     \$dbName = \$_ENV['DB_NAME'] ?? (isset(\$databaseParts['path']) ? ltrim(\$databaseParts['path'], '/') : '');
     try {
-      \$pdo = new PDO('mysql:host=' . \$host . ';port=' . \$port . ';dbname=' . \$dbName, \$user, \$pass);
-      \$stmt = \$pdo->query(\"SHOW TABLES LIKE 'user'\");
-      echo \$stmt && \$stmt->rowCount() > 0 ? 'true' : 'false';
+      \$pdo = new PDO('${DB_PDO_DRIVER}:host=' . \$host . ';port=' . \$port . ';dbname=' . \$dbName, \$user, \$pass);
+      \$sql = '${DB_DRIVER}' === 'postgresql'
+        ? "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='user'"
+        : "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'user'";
+      \$count = (int) \$pdo->query(\$sql)->fetchColumn();
+      echo \$count > 0 ? 'true' : 'false';
     } catch (Exception \$e) {
       echo 'false';
     }

@@ -103,7 +103,7 @@ if [[ -n "${MINIO_DEFAULT_BUCKET}" ]]; then
         echo 'Bucket \${MINIO_DEFAULT_BUCKET} listo.'
       \"
     networks:
-      - minio_network"
+      - network"
 else
   CREATEBUCKETS_SERVICE=""
 fi
@@ -123,9 +123,9 @@ services:
       - "\${MINIO_PORT_API}:9000"
       - "\${MINIO_PORT_CONSOLE}:9001"
     volumes:
-      - ${PROJECT_SLUG}_data:/data
+      - data:/data
     networks:
-      - minio_network
+      - network
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 10s
@@ -135,11 +135,11 @@ services:
 ${CREATEBUCKETS_SERVICE}
 
 volumes:
-  ${PROJECT_SLUG}_data:
+  data:
     name: ${PROJECT_SLUG}_data
 
 networks:
-  minio_network:
+  network:
     name: "\${MINIO_NETWORK}"
     external: true
 YAML

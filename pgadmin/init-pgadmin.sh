@@ -134,19 +134,19 @@ services:
     ports:
       - "\${PGADMIN_PORT}:80"
     volumes:
-      - ${PROJECT_SLUG}_data:/var/lib/pgadmin
+      - data:/var/lib/pgadmin
       - ./servers.json:/pgadmin4/servers.json:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
-      - db_network
+      - network
 
 volumes:
-  ${PROJECT_SLUG}_data:
+  data:
     name: ${PROJECT_SLUG}_data
 
 networks:
-  db_network:
+  network:
     name: "\${DB_NETWORK}"
     external: true
 YAML

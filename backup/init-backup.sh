@@ -233,15 +233,16 @@ services:
     restart: unless-stopped
     env_file: .env
     volumes:
-      - backup_data:/backups
+      - data:/backups
     networks:
-      - db_network
+      - network
 
 volumes:
-  backup_data:
+  data:
+    name: ${PROJECT_SLUG}_data
 
 networks:
-  db_network:
+  network:
     name: "${DB_NETWORK}"
     external: true
 YAML
