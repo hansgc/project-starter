@@ -1,0 +1,40 @@
+#!/bin/bash
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TOOL="${1:-}"
+
+if [[ -z "$TOOL" ]]; then
+  echo "Uso: project-starter <herramienta> <archivo.conf>"
+  echo ""
+  echo "Herramientas disponibles:"
+  echo "  php          - Proyecto PHP/Symfony"
+  echo "  mysql        - Contenedor MySQL"
+  echo "  postgresql   - Contenedor PostgreSQL"
+  echo "  pgadmin      - Panel pgAdmin4"
+  echo "  phpmyadmin   - Panel phpMyAdmin"
+  echo "  minio        - Servidor MinIO"
+  echo "  backup       - Servicio de backup (Backblaze B2)"
+  exit 0
+fi
+
+shift
+
+declare -A SCRIPT_MAP=(
+  [php]="php/init-php.sh"
+  [mysql]="mysql/init-mysql.sh"
+  [postgresql]="postgresql/init-postgresql.sh"
+  [pgadmin]="pgadmin/init-pgadmin.sh"
+  [phpmyadmin]="phpmyadmin/init-phpmyadmin.sh"
+  [minio]="minio/init-minio.sh"
+  [backup]="backup/init-backup.sh"
+)
+
+SCRIPT="${SCRIPT_MAP[$TOOL]:-}"
+
+if [[ -z "$SCRIPT" ]]; then
+  echo "Error: herramienta desconocida '$TOOL'"
+  echo "Ejecuta 'project-starter' sin argumentos para ver las opciones."
+  exit 1
+fi
+
+exec "$SCRIPT_DIR/$SCRIPT" "$@"

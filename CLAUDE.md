@@ -18,7 +18,7 @@ cd mysql/
 ./init-mysql.sh my-project.conf
 
 # PostgreSQL container
-cd postgres/
+cd postgresql/
 ./init-postgres.sh my-project.conf
 
 # phpMyAdmin panel (MySQL)
@@ -32,6 +32,10 @@ cd pgadmin/
 # Backup service (Backblaze B2)
 cd backup/
 ./init-backup.sh my-project.conf
+
+# MinIO file server (S3-compatible)
+cd minio/
+./init-minio.sh my-project.conf
 ```
 
 The scripts require running Docker containers when a database or backup container is referenced — they verify container presence before proceeding.

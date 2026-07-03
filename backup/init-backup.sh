@@ -145,13 +145,12 @@ if [[ -n "$CONFIG_FILE" ]]; then
   DB_USER="${DB_USER:-app_user}"
   DB_PASS="${DB_PASS:-secret_password}"
   CLIENTE_ID="${CLIENTE_ID:-mi-cliente}"
-  DB_NETWORK="${DB_NETWORK:-app_network}"
+  DB_NETWORK="${DB_NETWORK:-proyectos-net}"
 
   PROJECT_SLUG=$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
   PROJECT_FOLDER="${PROJECT_SLUG}-backup"
 
-  # Si no se definió directamente, calcularla desde DB_NETWORK
-  DB_NETWORK="${DB_NETWORK:-app_network}"
+  DB_NETWORK="${DB_NETWORK:-proyectos-net}"
 
   B2_KEY_ID="${B2_KEY_ID:-}"
   B2_APP_KEY="${B2_APP_KEY:-}"
@@ -163,15 +162,10 @@ if [[ -n "$CONFIG_FILE" ]]; then
 # --- Verificar red Docker ---
 step "Verificando red Docker"
 if ! verificar_red_docker "$DB_NETWORK"; then
-  echo "  ⚠ La red Docker '$DB_NETWORK' no existe."
-  echo "  Creando red automáticamente..."
-  if crear_red_docker "$DB_NETWORK"; then
-    echo "  ✓ Red '$DB_NETWORK' creada."
-  else
-    echo "  ❌ No se pudo crear la red '$DB_NETWORK'. Por favor, créala manualmente con:"
-    echo "     docker network create $DB_NETWORK"
-    exit 1
-  fi
+  echo "  ❌ La red Docker '$DB_NETWORK' no existe."
+  echo "  Créala antes de ejecutar este script:"
+  echo "     docker network create $DB_NETWORK"
+  exit 1
 else
   echo "  ✓ La red '$DB_NETWORK' existe."
 fi
@@ -239,15 +233,16 @@ services:
     restart: unless-stopped
     env_file: .env
     volumes:
-      - backup_data:/backups
+      - data:/backups
     networks:
-      - db_network
+      - network
 
 volumes:
-  backup_data:
+  data:
+    name: ${PROJECT_SLUG}_data
 
 networks:
-  db_network:
+  network:
     name: "${DB_NETWORK}"
     external: true
 YAML
